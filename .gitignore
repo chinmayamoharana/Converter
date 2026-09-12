@@ -1,0 +1,24 @@
+# Logs
+.codex-logs/
+*.log
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django media & database
+backend/project/media/*
+!backend/project/media/.gitkeep
+*.sqlite3
+*.db
+
+# Virtual Environment
+backend/env/
+env/
+venv/
+
+# Frontend dependencies and builds
+frontend/node_modules/
+frontend/dist/
+.ds_store

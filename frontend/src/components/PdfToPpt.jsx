@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
 import {
-  FileText,
+  Presentation,
   UploadCloud,
   FileCheck,
   CheckCircle2,
@@ -12,7 +12,7 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -24,7 +24,7 @@ const formatBytes = (bytes, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 };
 
-const PdfToWord = () => {
+const PdfToPpt = () => {
   const [file, setFile] = useState(null);
   const [download, setDownload] = useState("");
   const [error, setError] = useState("");
@@ -70,16 +70,16 @@ const PdfToWord = () => {
 
   const simulateProgress = () => {
     setProgress(15);
-    setProgressStatus("Uploading PDF file to engine...");
+    setProgressStatus("Uploading PDF file...");
 
     const timer1 = setTimeout(() => {
-      setProgress(50);
-      setProgressStatus("Analyzing pages, tables & typography...");
-    }, 600);
+      setProgress(55);
+      setProgressStatus("Rendering pages as presentation slides...");
+    }, 700);
 
     const timer2 = setTimeout(() => {
       setProgress(85);
-      setProgressStatus("Formatting output Word (.docx) document...");
+      setProgressStatus("Building PowerPoint (.pptx) deck...");
     }, 1400);
 
     return () => {
@@ -105,18 +105,17 @@ const PdfToWord = () => {
     const cleanupTimers = simulateProgress();
 
     try {
-      const res = await api.post("pdf-to-word/", formData);
+      const res = await api.post("pdf-to-ppt/", formData);
       const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
 
       setProgress(100);
       setProgressStatus("Conversion Complete!");
       setDownload(downloadUrl);
-      setMessage(res.data.message || "PDF converted successfully to editable Word document.");
+      setMessage(res.data.message || "PDF converted successfully to PowerPoint presentation.");
 
-      // Save to localStorage history
       try {
         const historyItem = {
-          type: "pdf-to-word",
+          type: "pdf-to-ppt",
           originalName: file.name,
           downloadUrl: downloadUrl,
           date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -131,7 +130,7 @@ const PdfToWord = () => {
 
     } catch (err) {
       setError(
-        err.response?.data?.error || "Conversion failed. Please verify your PDF file and try again."
+        err.response?.data?.error || "PDF to PPT conversion failed. Please try another file."
       );
       setMessage("");
     } finally {
@@ -158,28 +157,21 @@ const PdfToWord = () => {
 
   return (
     <div className="max-w-3xl mx-auto my-8">
-      {/* Header Banner */}
       <div className="text-center mb-8">
-        <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-4 shadow-inner">
-          <FileText className="w-3.5 h-3.5" /> High-Fidelity Converter
+        <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 mb-4 shadow-inner">
+          <Presentation className="w-3.5 h-3.5" /> Presentation Converter
         </span>
         <h1 className="text-3xl sm:text-4xl font-extrabold font-heading text-white tracking-tight">
-          Convert <span className="text-transparent bg-clip-text bg-gradient-to-r from-rose-400 via-pink-400 to-amber-300">PDF to Word</span>
+          Convert <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-400 to-rose-300">PDF to PPT</span>
         </h1>
         <p className="text-slate-400 text-sm sm:text-base mt-2 max-w-lg mx-auto">
-          Transform your PDF documents into fully editable DOCX files while preserving text formatting, images, and page layouts.
+          Convert PDF pages into PowerPoint slide decks (.pptx) ready for presenting.
         </p>
       </div>
 
-      {/* Main Glass Card */}
       <div className="glass-panel p-6 sm:p-10 rounded-3xl border border-slate-800 shadow-2xl relative overflow-hidden">
-        {/* Glow accent effect */}
-        <div className="absolute -top-24 -left-24 w-48 h-48 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-
         {!download ? (
           <div>
-            {/* Drag & Drop Area */}
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -187,10 +179,10 @@ const PdfToWord = () => {
               onClick={() => fileInputRef.current?.click()}
               className={`relative border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center cursor-pointer transition-all duration-300 ${
                 isDragging
-                  ? "border-rose-500 bg-rose-500/10 scale-[1.01]"
+                  ? "border-amber-500 bg-amber-500/10 scale-[1.01]"
                   : file
                   ? "border-emerald-500/50 bg-slate-900/60"
-                  : "border-slate-700/80 hover:border-indigo-500/60 bg-slate-900/40 hover:bg-slate-900/80"
+                  : "border-slate-700/80 hover:border-amber-500/60 bg-slate-900/40 hover:bg-slate-900/80"
               }`}
             >
               <input
@@ -203,16 +195,16 @@ const PdfToWord = () => {
 
               {!file ? (
                 <div className="flex flex-col items-center">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-500/20 to-pink-500/20 border border-rose-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <UploadCloud className="w-8 h-8 text-rose-400" />
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-500/20 to-orange-500/20 border border-amber-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <UploadCloud className="w-8 h-8 text-amber-400" />
                   </div>
                   <h3 className="text-lg font-bold font-heading text-white mb-1">
-                    Drag & Drop your PDF here
+                    Drag & Drop PDF here
                   </h3>
                   <p className="text-slate-400 text-xs sm:text-sm mb-4">
-                    or click to browse from your computer
+                    or click to browse PDF files from your device
                   </p>
-                  <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/30 transition-all">
+                  <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-lg shadow-amber-600/30 transition-all">
                     Select PDF File <ArrowRight className="w-3.5 h-3.5" />
                   </span>
                 </div>
@@ -237,7 +229,7 @@ const PdfToWord = () => {
                       e.stopPropagation();
                       resetForm();
                     }}
-                    className="text-xs text-rose-400 hover:text-rose-300 underline font-medium"
+                    className="text-xs text-amber-400 hover:text-amber-300 underline font-medium"
                   >
                     Change selected file
                   </button>
@@ -245,48 +237,45 @@ const PdfToWord = () => {
               )}
             </div>
 
-            {/* Progress Bar */}
             {isConverting && (
               <div className="mt-6 space-y-2">
                 <div className="flex justify-between text-xs text-slate-300">
                   <span className="flex items-center gap-1.5 font-medium">
-                    <RefreshCw className="w-3.5 h-3.5 text-rose-400 animate-spin" />
+                    <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
                     {progressStatus}
                   </span>
                   <span className="font-mono font-semibold">{progress}%</span>
                 </div>
                 <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700">
                   <div
-                    className="h-full bg-gradient-to-r from-rose-500 via-pink-500 to-amber-400 rounded-full transition-all duration-300 shadow-lg shadow-rose-500/50"
+                    className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-rose-400 rounded-full transition-all duration-300 shadow-lg shadow-amber-500/50"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
               </div>
             )}
 
-            {/* Convert Action Button */}
             <button
               onClick={handleConvert}
               disabled={!file || isConverting}
               className={`w-full py-4 mt-6 rounded-2xl font-bold font-heading text-sm sm:text-base flex items-center justify-center gap-2 shadow-xl transition-all duration-300 ${
                 !file || isConverting
                   ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50"
-                  : "bg-gradient-to-r from-rose-600 via-pink-600 to-rose-600 hover:from-rose-500 hover:to-pink-500 text-white shadow-rose-600/30 hover:scale-[1.01] active:scale-[0.99]"
+                  : "bg-gradient-to-r from-amber-600 via-orange-600 to-amber-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-600/30 hover:scale-[1.01]"
               }`}
             >
               {isConverting ? (
                 <>
-                  <RefreshCw className="w-5 h-5 animate-spin" /> Converting Document...
+                  <RefreshCw className="w-5 h-5 animate-spin" /> Converting to PPT...
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-5 h-5" /> Convert PDF to Word (.docx)
+                  <Sparkles className="w-5 h-5" /> Convert PDF to PowerPoint (.pptx)
                 </>
               )}
             </button>
           </div>
         ) : (
-          /* Result Download Card */
           <div className="text-center py-4 space-y-6">
             <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/10 animate-bounce">
               <CheckCircle2 className="w-10 h-10 text-emerald-400" />
@@ -297,11 +286,9 @@ const PdfToWord = () => {
                 Conversion Successful
               </span>
               <h3 className="text-2xl font-bold font-heading text-white">
-                Your Word File is Ready!
+                Your PowerPoint File is Ready!
               </h3>
-              <p className="text-slate-400 text-xs sm:text-sm mt-1">
-                {message}
-              </p>
+              <p className="text-slate-400 text-xs sm:text-sm mt-1">{message}</p>
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
@@ -310,7 +297,7 @@ const PdfToWord = () => {
                 download
                 className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all hover:scale-105"
               >
-                <Download className="w-4 h-4" /> Download Word File
+                <Download className="w-4 h-4" /> Download PPTX Deck
               </a>
 
               <button
@@ -332,7 +319,7 @@ const PdfToWord = () => {
             <div className="pt-4 border-t border-slate-800/80">
               <button
                 onClick={resetForm}
-                className="text-xs text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1.5 transition-colors"
+                className="text-xs text-amber-400 hover:text-amber-300 font-medium inline-flex items-center gap-1.5 transition-colors"
               >
                 <RefreshCw className="w-3.5 h-3.5" /> Convert another PDF document
               </button>
@@ -340,7 +327,6 @@ const PdfToWord = () => {
           </div>
         )}
 
-        {/* Error Alert */}
         {error && (
           <div className="mt-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs sm:text-sm flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
@@ -349,13 +335,12 @@ const PdfToWord = () => {
         )}
       </div>
 
-      {/* Info footer note */}
       <div className="flex items-center justify-center gap-2 text-xs text-slate-500 mt-6 text-center">
-        <ShieldAlert className="w-3.5 h-3.5 text-slate-400" />
-        <span>Text-based PDFs yield editable text. Scanned PDFs fallback to clear image page snapshots.</span>
+        <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
+        <span>PDF pages are embedded as high-resolution presentation slides with matching aspect ratios.</span>
       </div>
     </div>
   );
 };
 
-export default PdfToWord;
+export default PdfToPpt;

@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
 import {
-  FileText,
+  Image as ImageIcon,
   UploadCloud,
   FileCheck,
   CheckCircle2,
@@ -12,7 +12,9 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldAlert,
+  ShieldCheck,
+  Layers,
+  X,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -24,8 +26,8 @@ const formatBytes = (bytes, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 };
 
-const PdfToWord = () => {
-  const [file, setFile] = useState(null);
+const ImageToPdf = () => {
+  const [files, setFiles] = useState([]);
   const [download, setDownload] = useState("");
   const [error, setError] = useState("");
   const [isConverting, setIsConverting] = useState(false);
@@ -37,17 +39,23 @@ const PdfToWord = () => {
 
   const fileInputRef = useRef(null);
 
-  const handleFileSelect = (selectedFile) => {
-    if (!selectedFile) return;
-    if (selectedFile.type !== "application/pdf" && !selectedFile.name.endsWith(".pdf")) {
-      setError("Invalid file format. Please select a valid PDF file (.pdf).");
-      setFile(null);
+  const handleFilesSelect = (selectedFiles) => {
+    if (!selectedFiles || selectedFiles.length === 0) return;
+    const validFiles = Array.from(selectedFiles).filter((f) =>
+      /\.(jpg|jpeg|png|webp|bmp|tiff)$/i.test(f.name)
+    );
+    if (validFiles.length === 0) {
+      setError("Please select valid image files (JPG, PNG, WEBP, BMP).");
       return;
     }
-    setFile(selectedFile);
+    setFiles((prev) => [...prev, ...validFiles]);
     setError("");
     setDownload("");
     setMessage("");
+  };
+
+  const removeFile = (index) => {
+    setFiles((prev) => prev.filter((_, idx) => idx !== index));
   };
 
   const handleDragOver = (e) => {
@@ -63,24 +71,24 @@ const PdfToWord = () => {
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileSelect(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFilesSelect(e.dataTransfer.files);
     }
   };
 
   const simulateProgress = () => {
-    setProgress(15);
-    setProgressStatus("Uploading PDF file to engine...");
+    setProgress(20);
+    setProgressStatus("Processing uploaded images...");
 
     const timer1 = setTimeout(() => {
-      setProgress(50);
-      setProgressStatus("Analyzing pages, tables & typography...");
-    }, 600);
+      setProgress(65);
+      setProgressStatus("Optimizing color spaces & margins...");
+    }, 700);
 
     const timer2 = setTimeout(() => {
-      setProgress(85);
-      setProgressStatus("Formatting output Word (.docx) document...");
-    }, 1400);
+      setProgress(90);
+      setProgressStatus("Compiling images into PDF document...");
+    }, 1500);
 
     return () => {
       clearTimeout(timer1);
@@ -89,13 +97,13 @@ const PdfToWord = () => {
   };
 
   const handleConvert = async () => {
-    if (!file) {
-      setError("Please select a PDF file first.");
+    if (files.length === 0) {
+      setError("Please select at least one image file.");
       return;
     }
 
     const formData = new FormData();
-    formData.append("file", file);
+    files.forEach((f) => formData.append("files", f));
 
     setIsConverting(true);
     setError("");
@@ -105,19 +113,18 @@ const PdfToWord = () => {
     const cleanupTimers = simulateProgress();
 
     try {
-      const res = await api.post("pdf-to-word/", formData);
+      const res = await api.post("image-to-pdf/", formData);
       const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
 
       setProgress(100);
       setProgressStatus("Conversion Complete!");
       setDownload(downloadUrl);
-      setMessage(res.data.message || "PDF converted successfully to editable Word document.");
+      setMessage(res.data.message || "Images converted into PDF document successfully.");
 
-      // Save to localStorage history
       try {
         const historyItem = {
-          type: "pdf-to-word",
-          originalName: file.name,
+          type: "image-to-pdf",
+          originalName: `${files.length} Image(s)`,
           downloadUrl: downloadUrl,
           date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
@@ -131,7 +138,7 @@ const PdfToWord = () => {
 
     } catch (err) {
       setError(
-        err.response?.data?.error || "Conversion failed. Please verify your PDF file and try again."
+        err.response?.data?.error || "Image to PDF conversion failed. Please try again."
       );
       setMessage("");
     } finally {
@@ -148,7 +155,7 @@ const PdfToWord = () => {
   };
 
   const resetForm = () => {
-    setFile(null);
+    setFiles([]);
     setDownload("");
     setError("");
     setMessage("");
@@ -158,135 +165,138 @@ const PdfToWord = () => {
 
   return (
     <div className="max-w-3xl mx-auto my-8">
-      {/* Header Banner */}
       <div className="text-center mb-8">
-        <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-4 shadow-inner">
-          <FileText className="w-3.5 h-3.5" /> High-Fidelity Converter
+        <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-4 shadow-inner">
+          <ImageIcon className="w-3.5 h-3.5" /> Media Converter
         </span>
         <h1 className="text-3xl sm:text-4xl font-extrabold font-heading text-white tracking-tight">
-          Convert <span className="text-transparent bg-clip-text bg-gradient-to-r from-rose-400 via-pink-400 to-amber-300">PDF to Word</span>
+          Convert <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-300">Image to PDF</span>
         </h1>
         <p className="text-slate-400 text-sm sm:text-base mt-2 max-w-lg mx-auto">
-          Transform your PDF documents into fully editable DOCX files while preserving text formatting, images, and page layouts.
+          Convert JPG, PNG, WEBP, or BMP images into a clean PDF document. Select single or multiple images.
         </p>
       </div>
 
-      {/* Main Glass Card */}
       <div className="glass-panel p-6 sm:p-10 rounded-3xl border border-slate-800 shadow-2xl relative overflow-hidden">
-        {/* Glow accent effect */}
-        <div className="absolute -top-24 -left-24 w-48 h-48 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-
         {!download ? (
           <div>
-            {/* Drag & Drop Area */}
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`relative border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center cursor-pointer transition-all duration-300 ${
+              className={`relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 ${
                 isDragging
-                  ? "border-rose-500 bg-rose-500/10 scale-[1.01]"
-                  : file
+                  ? "border-emerald-500 bg-emerald-500/10 scale-[1.01]"
+                  : files.length > 0
                   ? "border-emerald-500/50 bg-slate-900/60"
-                  : "border-slate-700/80 hover:border-indigo-500/60 bg-slate-900/40 hover:bg-slate-900/80"
+                  : "border-slate-700/80 hover:border-emerald-500/60 bg-slate-900/40 hover:bg-slate-900/80"
               }`}
             >
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf"
-                onChange={(e) => handleFileSelect(e.target.files[0])}
+                multiple
+                accept="image/png, image/jpeg, image/webp, image/bmp"
+                onChange={(e) => handleFilesSelect(e.target.files)}
                 className="hidden"
               />
 
-              {!file ? (
-                <div className="flex flex-col items-center">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-500/20 to-pink-500/20 border border-rose-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <UploadCloud className="w-8 h-8 text-rose-400" />
-                  </div>
-                  <h3 className="text-lg font-bold font-heading text-white mb-1">
-                    Drag & Drop your PDF here
-                  </h3>
-                  <p className="text-slate-400 text-xs sm:text-sm mb-4">
-                    or click to browse from your computer
-                  </p>
-                  <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/30 transition-all">
-                    Select PDF File <ArrowRight className="w-3.5 h-3.5" />
-                  </span>
+              <div className="flex flex-col items-center">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                  <UploadCloud className="w-7 h-7 text-emerald-400" />
                 </div>
-              ) : (
-                <div className="flex flex-col items-center">
-                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mb-4">
-                    <FileCheck className="w-8 h-8 text-emerald-400" />
-                  </div>
-                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-2">
-                    File Selected
-                  </span>
-                  <h4 className="text-base font-bold text-white max-w-xs truncate mb-1">
-                    {file.name}
-                  </h4>
-                  <p className="text-xs text-slate-400 mb-4 font-mono">
-                    {formatBytes(file.size)}
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      resetForm();
-                    }}
-                    className="text-xs text-rose-400 hover:text-rose-300 underline font-medium"
-                  >
-                    Change selected file
-                  </button>
-                </div>
-              )}
+                <h3 className="text-base font-bold font-heading text-white mb-1">
+                  Drag & Drop images here
+                </h3>
+                <p className="text-slate-400 text-xs mb-3">
+                  Supports JPG, PNG, WEBP, BMP (Select multiple files)
+                </p>
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/30 transition-all">
+                  Browse Images <ArrowRight className="w-3.5 h-3.5" />
+                </span>
+              </div>
             </div>
 
-            {/* Progress Bar */}
+            {files.length > 0 && (
+              <div className="mt-6 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-300 font-semibold px-1">
+                  <span className="flex items-center gap-1 text-emerald-400">
+                    <Layers className="w-4 h-4" /> Selected Images ({files.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={resetForm}
+                    className="text-xs text-rose-400 hover:underline"
+                  >
+                    Clear All
+                  </button>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                  {files.map((fileItem, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs"
+                    >
+                      <div className="flex items-center gap-2.5 truncate">
+                        <ImageIcon className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span className="text-slate-200 truncate font-medium">{fileItem.name}</span>
+                        <span className="text-slate-500 font-mono text-[11px] shrink-0">
+                          {formatBytes(fileItem.size)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(idx)}
+                        className="text-slate-400 hover:text-rose-400 p-1 rounded-md hover:bg-slate-800 transition-colors shrink-0"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {isConverting && (
               <div className="mt-6 space-y-2">
                 <div className="flex justify-between text-xs text-slate-300">
                   <span className="flex items-center gap-1.5 font-medium">
-                    <RefreshCw className="w-3.5 h-3.5 text-rose-400 animate-spin" />
+                    <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
                     {progressStatus}
                   </span>
                   <span className="font-mono font-semibold">{progress}%</span>
                 </div>
                 <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700">
                   <div
-                    className="h-full bg-gradient-to-r from-rose-500 via-pink-500 to-amber-400 rounded-full transition-all duration-300 shadow-lg shadow-rose-500/50"
+                    className="h-full bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-400 rounded-full transition-all duration-300 shadow-lg shadow-emerald-500/50"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
               </div>
             )}
 
-            {/* Convert Action Button */}
             <button
               onClick={handleConvert}
-              disabled={!file || isConverting}
+              disabled={files.length === 0 || isConverting}
               className={`w-full py-4 mt-6 rounded-2xl font-bold font-heading text-sm sm:text-base flex items-center justify-center gap-2 shadow-xl transition-all duration-300 ${
-                !file || isConverting
+                files.length === 0 || isConverting
                   ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50"
-                  : "bg-gradient-to-r from-rose-600 via-pink-600 to-rose-600 hover:from-rose-500 hover:to-pink-500 text-white shadow-rose-600/30 hover:scale-[1.01] active:scale-[0.99]"
+                  : "bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/30 hover:scale-[1.01]"
               }`}
             >
               {isConverting ? (
                 <>
-                  <RefreshCw className="w-5 h-5 animate-spin" /> Converting Document...
+                  <RefreshCw className="w-5 h-5 animate-spin" /> Compiling to PDF...
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-5 h-5" /> Convert PDF to Word (.docx)
+                  <Sparkles className="w-5 h-5" /> Convert {files.length} Image(s) to PDF
                 </>
               )}
             </button>
           </div>
         ) : (
-          /* Result Download Card */
           <div className="text-center py-4 space-y-6">
             <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/10 animate-bounce">
               <CheckCircle2 className="w-10 h-10 text-emerald-400" />
@@ -297,11 +307,9 @@ const PdfToWord = () => {
                 Conversion Successful
               </span>
               <h3 className="text-2xl font-bold font-heading text-white">
-                Your Word File is Ready!
+                Your PDF Document is Ready!
               </h3>
-              <p className="text-slate-400 text-xs sm:text-sm mt-1">
-                {message}
-              </p>
+              <p className="text-slate-400 text-xs sm:text-sm mt-1">{message}</p>
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
@@ -310,7 +318,7 @@ const PdfToWord = () => {
                 download
                 className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all hover:scale-105"
               >
-                <Download className="w-4 h-4" /> Download Word File
+                <Download className="w-4 h-4" /> Download PDF Document
               </a>
 
               <button
@@ -332,15 +340,14 @@ const PdfToWord = () => {
             <div className="pt-4 border-t border-slate-800/80">
               <button
                 onClick={resetForm}
-                className="text-xs text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1.5 transition-colors"
+                className="text-xs text-emerald-400 hover:text-emerald-300 font-medium inline-flex items-center gap-1.5 transition-colors"
               >
-                <RefreshCw className="w-3.5 h-3.5" /> Convert another PDF document
+                <RefreshCw className="w-3.5 h-3.5" /> Convert more images
               </button>
             </div>
           </div>
         )}
 
-        {/* Error Alert */}
         {error && (
           <div className="mt-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs sm:text-sm flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
@@ -349,13 +356,12 @@ const PdfToWord = () => {
         )}
       </div>
 
-      {/* Info footer note */}
       <div className="flex items-center justify-center gap-2 text-xs text-slate-500 mt-6 text-center">
-        <ShieldAlert className="w-3.5 h-3.5 text-slate-400" />
-        <span>Text-based PDFs yield editable text. Scanned PDFs fallback to clear image page snapshots.</span>
+        <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
+        <span>Multiple images are arranged into separate pages with optimized aspect ratios.</span>
       </div>
     </div>
   );
 };
 
-export default PdfToWord;
+export default ImageToPdf;
