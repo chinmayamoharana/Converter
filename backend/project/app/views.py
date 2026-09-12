@@ -15,9 +15,9 @@ from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.shared import Pt
 from pdf2docx import Converter
-from pptx import Presentation
-
 from concurrent.futures import ThreadPoolExecutor
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
 
 # Ensure media folder exists
 os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
