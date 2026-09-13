@@ -132,9 +132,9 @@ const PptToPdf = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "PPT to PDF conversion failed. Please try another file."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PPT to PDF conversion failed. Please try another file.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();

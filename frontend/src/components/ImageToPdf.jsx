@@ -137,9 +137,9 @@ const ImageToPdf = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "Image to PDF conversion failed. Please try again."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Image to PDF conversion failed. Please try again.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();

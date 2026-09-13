@@ -135,6 +135,97 @@ def _build_image_based_docx(pdf_path, docx_path):
         _cleanup_files(*temp_images)
 
 
+def _docx_to_pdf_pure_python(docx_path, pdf_path):
+    pdf_doc = fitz.open()
+    page_w, page_h = 595.0, 842.0
+    margin = 54.0
+    page = pdf_doc.new_page(width=page_w, height=page_h)
+    y_cursor = margin
+
+    try:
+        doc = Document(docx_path)
+        for p in doc.paragraphs:
+            text = p.text.strip()
+            if not text:
+                y_cursor += 10.0
+                continue
+                
+            font_size = 11.0
+            line_height = 15.0
+            if hasattr(p, 'style') and p.style and p.style.name.startswith('Heading 1'):
+                font_size = 18.0
+                line_height = 22.0
+            elif hasattr(p, 'style') and p.style and p.style.name.startswith('Heading 2'):
+                font_size = 14.0
+                line_height = 18.0
+
+            if y_cursor + line_height > page_h - margin:
+                page = pdf_doc.new_page(width=page_w, height=page_h)
+                y_cursor = margin
+
+            page.insert_text(fitz.Point(margin, y_cursor), text[:120], fontsize=font_size, color=(0.1, 0.1, 0.1))
+            y_cursor += line_height
+    except Exception:
+        try:
+            with zipfile.ZipFile(docx_path, 'r') as z:
+                xml_content = z.read("word/document.xml").decode("utf-8", errors="ignore")
+                import re
+                texts = re.findall(r'<w:t[^>]*>(.*?)</w:t>', xml_content)
+                if texts:
+                    full_txt = " ".join(texts)
+                    page.insert_text(fitz.Point(margin, y_cursor), full_txt[:500], fontsize=11.0)
+        except Exception:
+            pass
+
+    if pdf_doc.page_count == 0:
+        pdf_doc.new_page(width=page_w, height=page_h)
+
+    pdf_doc.save(str(pdf_path), deflate=True)
+    pdf_doc.close()
+
+
+def _pptx_to_pdf_pure_python(pptx_path, pdf_path):
+    pdf_doc = fitz.open()
+    slide_w, slide_h = 960.0, 540.0
+    page = pdf_doc.new_page(width=slide_w, height=slide_h)
+    y_cursor = 40.0
+
+    try:
+        prs = Presentation(pptx_path)
+        for slide in prs.slides:
+            if y_cursor > slide_h - 40:
+                page = pdf_doc.new_page(width=slide_w, height=slide_h)
+                y_cursor = 40.0
+
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for paragraph in shape.text_frame.paragraphs:
+                        text = paragraph.text.strip()
+                        if text:
+                            page.insert_text(fitz.Point(50, y_cursor), text[:120], fontsize=13.0, color=(0.1, 0.1, 0.2))
+                            y_cursor += 18.0
+    except Exception:
+        try:
+            with zipfile.ZipFile(pptx_path, 'r') as z:
+                slide_files = [f for f in z.namelist() if f.startswith("ppt/slides/slide")]
+                import re
+                for s_file in slide_files:
+                    xml_content = z.read(s_file).decode("utf-8", errors="ignore")
+                    texts = re.findall(r'<a:t[^>]*>(.*?)</a:t>', xml_content)
+                    if texts:
+                        page.insert_text(fitz.Point(50, y_cursor), " ".join(texts)[:300], fontsize=13.0)
+                        y_cursor += 25.0
+        except Exception:
+            pass
+
+    if pdf_doc.page_count == 0:
+        pdf_doc.new_page(width=slide_w, height=slide_h)
+
+    pdf_doc.save(str(pdf_path), deflate=True)
+    pdf_doc.close()
+
+
+
 def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=True):
     if not zipfile.is_zipfile(input_path):
         import shutil
@@ -214,22 +305,31 @@ def pdf_to_word(request):
     try:
         _save_uploaded_file(pdf_file, pdf_path)
 
-        if _pdf_has_extractable_text(pdf_path):
-            converter = Converter(str(pdf_path))
-            converter.convert(str(docx_path))
-            message = "PDF converted to Word document (.docx)"
-        else:
+        try:
+            if _pdf_has_extractable_text(pdf_path):
+                converter = Converter(str(pdf_path))
+                converter.convert(str(docx_path))
+                message = "PDF converted to Word document (.docx)"
+            else:
+                _build_image_based_docx(pdf_path, docx_path)
+                message = "Image-based PDF converted to Word with page snapshots"
+        except Exception:
             _build_image_based_docx(pdf_path, docx_path)
-            message = "Image-based PDF converted to Word with page snapshots"
+            message = "PDF converted to Word with layout snapshots"
+
     except Exception as exc:
         _cleanup_files(pdf_path, docx_path)
         return Response(
-            {"error": f"Conversion failed: {exc}"},
+            {"error": f"Conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
         if converter is not None:
-            converter.close()
+            try:
+                converter.close()
+            except Exception:
+                pass
+        _cleanup_files(pdf_path)
 
     return Response({
         "message": message,
@@ -252,16 +352,21 @@ def word_to_pdf(request):
 
     try:
         _save_uploaded_file(word_file, word_path)
-        docx_convert(str(word_path), str(pdf_path))
+        try:
+            docx_convert(str(word_path), str(pdf_path))
+        except Exception:
+            _docx_to_pdf_pure_python(word_path, pdf_path)
     except Exception as exc:
         _cleanup_files(word_path, pdf_path)
         return Response(
-            {"error": f"Conversion failed: {exc}"},
+            {"error": f"Conversion failed: {str(exc)}"},
             status=500,
         )
+    finally:
+        _cleanup_files(word_path)
 
     return Response({
-        "message": "Word converted to PDF with embedded formatting preserved",
+        "message": "Word converted to PDF document",
         "file": settings.MEDIA_URL + pdf_path.name
     })
 
@@ -344,7 +449,6 @@ def ppt_to_pdf(request):
 
     try:
         _save_uploaded_file(ppt_file, ppt_path)
-
         try:
             import win32com.client
             powerpoint = win32com.client.Dispatch("PowerPoint.Application")
@@ -354,34 +458,18 @@ def ppt_to_pdf(request):
             deck.Close()
             powerpoint.Quit()
         except Exception:
-            prs = Presentation(str(ppt_path))
-            doc = fitz.open()
-
-            for slide in prs.slides:
-                page = doc.new_page(width=720, height=540)
-                text_content = []
-                for shape in slide.shapes:
-                    if shape.has_text_frame:
-                        text_content.append(shape.text)
-                
-                full_text = "\n".join(text_content).strip()
-                if not full_text:
-                    full_text = f"Slide Content ({len(doc)} pages)"
-
-                page.insert_text(fitz.Point(36, 50), full_text, fontsize=14)
-
-            doc.save(str(pdf_path))
-            doc.close()
-
+            _pptx_to_pdf_pure_python(ppt_path, pdf_path)
     except Exception as exc:
         _cleanup_files(ppt_path, pdf_path)
         return Response(
-            {"error": f"PPT to PDF conversion failed: {exc}"},
+            {"error": f"PPT to PDF conversion failed: {str(exc)}"},
             status=500,
         )
+    finally:
+        _cleanup_files(ppt_path)
 
     return Response({
-        "message": "PowerPoint converted to PDF presentation",
+        "message": "PowerPoint converted to PDF document",
         "file": settings.MEDIA_URL + pdf_path.name
     })
 

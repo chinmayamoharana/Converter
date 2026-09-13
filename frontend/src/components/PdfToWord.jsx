@@ -130,9 +130,9 @@ const PdfToWord = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "Conversion failed. Please verify your PDF file and try again."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Conversion failed. Please verify your PDF file and try again.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();

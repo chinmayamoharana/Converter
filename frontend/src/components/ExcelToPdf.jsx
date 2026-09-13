@@ -131,9 +131,10 @@ const ExcelToPdf = () => {
       const existing = JSON.parse(localStorage.getItem("converter_history") || "[]");
       localStorage.setItem("converter_history", JSON.stringify([historyItem, ...existing.slice(0, 9)]));
     } catch (err) {
-      setError(
-        err.response?.data?.error || "Excel to PDF conversion failed. Please try again."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Excel to PDF conversion failed. Please try again.");
+      setError(errorText);
+      setMessage("");
     } finally {
       cleanupTimers();
       setIsConverting(false);

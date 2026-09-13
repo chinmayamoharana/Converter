@@ -134,9 +134,9 @@ const WordToPdf = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "Conversion failed. Please check your DOCX document and try again."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Conversion failed. Please check your DOCX document and try again.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();

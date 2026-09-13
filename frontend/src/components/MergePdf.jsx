@@ -136,9 +136,9 @@ const MergePdf = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "PDF Merge failed. Please check your PDF files."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PDF Merge failed. Please check your PDF files.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();
