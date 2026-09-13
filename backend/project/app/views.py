@@ -10,11 +10,9 @@ import fitz  # PyMuPDF
 from PIL import Image
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from docx2pdf import convert as docx_convert
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.shared import Pt
-from pdf2docx import Converter
 from pptx import Presentation
 from concurrent.futures import ThreadPoolExecutor
 from rest_framework.decorators import api_view
@@ -92,43 +90,86 @@ def _pdf_has_extractable_text(pdf_path):
     return False
 
 
-def _build_image_based_docx(pdf_path, docx_path):
-    pdf_document = fitz.open(pdf_path)
+def _pdf_to_docx_pure_python(pdf_path, docx_path):
+    pdf_doc = fitz.open(pdf_path)
+    document = Document()
 
     try:
-        if pdf_document.page_count == 0:
-            raise ValueError("The uploaded PDF has no pages.")
+        if pdf_doc.page_count == 0:
+            raise ValueError("The uploaded PDF document has no pages.")
 
-        document = Document()
         first_section = document.sections[0]
-        first_page = pdf_document[0]
-        first_section.page_width = Pt(first_page.rect.width)
-        first_section.page_height = Pt(first_page.rect.height)
-        first_section.top_margin = Pt(18)
-        first_section.bottom_margin = Pt(18)
-        first_section.left_margin = Pt(18)
-        first_section.right_margin = Pt(18)
+        first_section.top_margin = Pt(36)
+        first_section.bottom_margin = Pt(36)
+        first_section.left_margin = Pt(36)
+        first_section.right_margin = Pt(36)
 
-        for index, page in enumerate(pdf_document):
-            if index > 0:
-                section = document.add_section(WD_SECTION.NEW_PAGE)
-                section.page_width = Pt(page.rect.width)
-                section.page_height = Pt(page.rect.height)
-                section.top_margin = Pt(18)
-                section.bottom_margin = Pt(18)
-                section.left_margin = Pt(18)
-                section.right_margin = Pt(18)
+        total_extracted_chars = 0
 
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-            img_bytes = pixmap.tobytes("png")
+        for page_idx, page in enumerate(pdf_doc):
+            if page_idx > 0:
+                sec = document.add_section(WD_SECTION.NEW_PAGE)
+                sec.top_margin = Pt(36)
+                sec.bottom_margin = Pt(36)
+                sec.left_margin = Pt(36)
+                sec.right_margin = Pt(36)
 
-            section = document.sections[-1]
-            usable_width = section.page_width - section.left_margin - section.right_margin
-            document.add_picture(io.BytesIO(img_bytes), width=usable_width)
+            text_blocks = page.get_text("blocks")
+            page_char_count = 0
 
-        document.save(docx_path)
+            if text_blocks:
+                for b in text_blocks:
+                    if len(b) >= 7 and b[6] == 0:
+                        block_text = b[4].strip()
+                        if block_text:
+                            page_char_count += len(block_text)
+                            for line in block_text.split("\n"):
+                                line_clean = line.strip()
+                                if line_clean:
+                                    p = document.add_paragraph()
+                                    run = p.add_run(line_clean)
+                                    run.font.name = "Calibri"
+                                    if len(line_clean) < 45 and (line_clean.isupper() or not line_clean.endswith('.')):
+                                        run.font.size = Pt(13)
+                                        run.font.bold = True
+                                    else:
+                                        run.font.size = Pt(11)
+
+            total_extracted_chars += page_char_count
+
+            if page_char_count == 0:
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+                img_bytes = pixmap.tobytes("png")
+                sec = document.sections[-1]
+                usable_w = sec.page_width - sec.left_margin - sec.right_margin
+                document.add_picture(io.BytesIO(img_bytes), width=usable_w)
+                del pixmap, img_bytes
+
+        if total_extracted_chars < 10:
+            document = Document()
+            sec = document.sections[0]
+            sec.top_margin = Pt(18)
+            sec.bottom_margin = Pt(18)
+            sec.left_margin = Pt(18)
+            sec.right_margin = Pt(18)
+
+            for idx, page in enumerate(pdf_doc):
+                if idx > 0:
+                    sec = document.add_section(WD_SECTION.NEW_PAGE)
+                    sec.top_margin = Pt(18)
+                    sec.bottom_margin = Pt(18)
+                    sec.left_margin = Pt(18)
+                    sec.right_margin = Pt(18)
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+                img_bytes = pixmap.tobytes("png")
+                usable_w = sec.page_width - sec.left_margin - sec.right_margin
+                document.add_picture(io.BytesIO(img_bytes), width=usable_w)
+                del pixmap, img_bytes
+
+        document.save(str(docx_path))
     finally:
-        pdf_document.close()
+        pdf_doc.close()
+
 
 
 def _docx_to_pdf_pure_python(docx_path, pdf_path):
@@ -296,35 +337,19 @@ def pdf_to_word(request):
         return Response({"error": "Please upload a PDF file"}, status=400)
 
     pdf_path, docx_path = _build_unique_paths(pdf_file.name, ".docx")
-    converter = None
 
     try:
         _save_uploaded_file(pdf_file, pdf_path)
-
-        try:
-            if _pdf_has_extractable_text(pdf_path):
-                converter = Converter(str(pdf_path))
-                converter.convert(str(docx_path))
-                message = "PDF converted to Word document (.docx)"
-            else:
-                _build_image_based_docx(pdf_path, docx_path)
-                message = "Image-based PDF converted to Word with page snapshots"
-        except Exception:
-            _build_image_based_docx(pdf_path, docx_path)
-            message = "PDF converted to Word with layout snapshots"
+        _pdf_to_docx_pure_python(pdf_path, docx_path)
+        message = "PDF converted to Word document (.docx) successfully"
 
     except Exception as exc:
         _cleanup_files(pdf_path, docx_path)
         return Response(
-            {"error": f"Conversion failed: {str(exc)}"},
+            {"error": f"PDF to Word conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
-        if converter is not None:
-            try:
-                converter.close()
-            except Exception:
-                pass
         _cleanup_files(pdf_path)
 
     return Response({
@@ -348,14 +373,11 @@ def word_to_pdf(request):
 
     try:
         _save_uploaded_file(word_file, word_path)
-        try:
-            docx_convert(str(word_path), str(pdf_path))
-        except Exception:
-            _docx_to_pdf_pure_python(word_path, pdf_path)
+        _docx_to_pdf_pure_python(word_path, pdf_path)
     except Exception as exc:
         _cleanup_files(word_path, pdf_path)
         return Response(
-            {"error": f"Conversion failed: {str(exc)}"},
+            {"error": f"Word to PDF conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
@@ -437,16 +459,7 @@ def ppt_to_pdf(request):
 
     try:
         _save_uploaded_file(ppt_file, ppt_path)
-        try:
-            import win32com.client
-            powerpoint = win32com.client.Dispatch("PowerPoint.Application")
-            powerpoint.Visible = 1
-            deck = powerpoint.Presentations.Open(str(ppt_path.resolve()))
-            deck.SaveAs(str(pdf_path.resolve()), 32)
-            deck.Close()
-            powerpoint.Quit()
-        except Exception:
-            _pptx_to_pdf_pure_python(ppt_path, pdf_path)
+        _pptx_to_pdf_pure_python(ppt_path, pdf_path)
     except Exception as exc:
         _cleanup_files(ppt_path, pdf_path)
         return Response(
