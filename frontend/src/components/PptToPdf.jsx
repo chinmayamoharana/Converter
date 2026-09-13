@@ -132,7 +132,6 @@ const PptToPdf = () => {
       setError(formatErrorMessage(err, "PPT to PDF conversion failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

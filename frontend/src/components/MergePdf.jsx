@@ -155,7 +155,6 @@ const MergePdf = () => {
       setError(formatErrorMessage(err, "PDF Merge failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

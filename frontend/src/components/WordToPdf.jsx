@@ -134,7 +134,6 @@ const WordToPdf = () => {
       setError(formatErrorMessage(err, "Word to PDF conversion failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

@@ -76,25 +76,7 @@ const PdfToImage = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(15);
-    setProgressStatus("Uploading PDF file...");
 
-    const timer1 = setTimeout(() => {
-      setProgress(55);
-      setProgressStatus("Rendering high-res page images...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(85);
-      setProgressStatus("Packaging image output...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
 
   const handleConvert = async () => {
     if (!file) {
@@ -147,7 +129,6 @@ const PdfToImage = () => {
       setError(formatErrorMessage(err, "PDF to Image conversion failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

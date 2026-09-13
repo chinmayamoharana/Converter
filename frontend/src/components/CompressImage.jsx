@@ -136,7 +136,6 @@ const CompressImage = () => {
       setError(formatErrorMessage(err, "Image compression failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

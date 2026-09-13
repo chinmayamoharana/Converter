@@ -136,7 +136,6 @@ const CompressPpt = () => {
       setError(formatErrorMessage(err, "PowerPoint compression failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

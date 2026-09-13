@@ -134,7 +134,6 @@ const ImageToPdf = () => {
       setError(formatErrorMessage(err, "Image to PDF conversion failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

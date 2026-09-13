@@ -127,7 +127,6 @@ const PdfToWord = () => {
       setError(formatErrorMessage(err, "PDF to Word conversion failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

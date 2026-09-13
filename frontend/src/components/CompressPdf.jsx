@@ -135,7 +135,6 @@ const CompressPdf = () => {
       setError(formatErrorMessage(err, "PDF compression failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

@@ -136,7 +136,6 @@ const CompressWord = () => {
       setError(formatErrorMessage(err, "Word compression failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

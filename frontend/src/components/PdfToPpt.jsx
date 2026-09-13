@@ -126,7 +126,6 @@ const PdfToPpt = () => {
       setError(formatErrorMessage(err, "PDF to PPT conversion failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

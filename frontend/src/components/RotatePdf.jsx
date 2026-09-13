@@ -124,7 +124,6 @@ const RotatePdf = () => {
     } catch (err) {
       setError(formatErrorMessage(err, "PDF rotation failed. Please try again."));
     } finally {
-      cleanupTimers();
       setIsRotating(false);
     }
   };

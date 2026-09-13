@@ -123,7 +123,6 @@ const SplitPdf = () => {
     } catch (err) {
       setError(formatErrorMessage(err, "PDF split failed. Please try again."));
     } finally {
-      cleanupTimers();
       setIsSplitting(false);
     }
   };

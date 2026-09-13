@@ -130,7 +130,6 @@ const ExcelToPdf = () => {
       setError(formatErrorMessage(err, "Excel to PDF conversion failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };

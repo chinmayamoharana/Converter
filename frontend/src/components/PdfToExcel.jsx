@@ -123,7 +123,6 @@ const PdfToExcel = () => {
       setError(formatErrorMessage(err, "PDF to Excel extraction failed. Please try again."));
       setMessage("");
     } finally {
-      cleanupTimers();
       setIsConverting(false);
     }
   };
