@@ -17,6 +17,8 @@ import {
   Trash2,
   MoveUp,
   MoveDown,
+  FileText,
+  X,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {

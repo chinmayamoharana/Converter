@@ -15,6 +15,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Zap,
+  Minimize2,
+  TrendingDown,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {

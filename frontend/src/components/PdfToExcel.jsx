@@ -14,6 +14,7 @@ import {
   Sparkles,
   ArrowRight,
   ShieldAlert,
+  FileText,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {

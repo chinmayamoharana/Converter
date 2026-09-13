@@ -2,6 +2,7 @@ import os
 import io
 import time
 import zipfile
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -93,7 +94,7 @@ def _get_single_input_path(request, param_name='file'):
         request.data.get(f"{param_name}_path") or 
         request.POST.get(f"{param_name}_path")
     )
-    if file_path_str:
+    if file_path_str and isinstance(file_path_str, str):
         p = Path(file_path_str)
         if p.exists():
             return p, p.name, False
@@ -247,48 +248,113 @@ def _pdf_to_docx_pure_python(pdf_path, docx_path):
 
 def _docx_to_pdf_pure_python(docx_path, pdf_path):
     pdf_doc = fitz.open()
-    page_w, page_h = 595.0, 842.0
-    margin = 54.0
+    page_w, page_h = 595.0, 842.0  # Standard A4
+    margin = 40.0
+    usable_w = page_w - (2 * margin)
+
     page = pdf_doc.new_page(width=page_w, height=page_h)
     y_cursor = margin
 
+    def check_new_page(needed_h):
+        nonlocal page, y_cursor
+        if y_cursor + needed_h > page_h - margin:
+            page = pdf_doc.new_page(width=page_w, height=page_h)
+            y_cursor = margin
+
     try:
         doc = Document(docx_path)
+        
+        # 1. Process Paragraphs
         for p in doc.paragraphs:
             text = p.text.strip()
             if not text:
                 y_cursor += 10.0
                 continue
-                
-            font_size = 11.0
-            line_height = 15.0
-            if hasattr(p, 'style') and p.style and p.style.name.startswith('Heading 1'):
-                font_size = 18.0
-                line_height = 22.0
-            elif hasattr(p, 'style') and p.style and p.style.name.startswith('Heading 2'):
-                font_size = 14.0
-                line_height = 18.0
 
-            if y_cursor + line_height > page_h - margin:
+            font_size = 11.0
+            line_h = 16.0
+
+            if hasattr(p, 'style') and p.style and p.style.name:
+                sname = p.style.name.lower()
+                if 'heading 1' in sname:
+                    font_size = 18.0
+                    line_h = 24.0
+                elif 'heading 2' in sname:
+                    font_size = 14.0
+                    line_h = 20.0
+                elif 'heading' in sname:
+                    font_size = 13.0
+                    line_h = 18.0
+
+            approx_lines = max(1, len(text) // 70 + 1)
+            box_h = approx_lines * line_h
+            check_new_page(box_h)
+
+            rect = fitz.Rect(margin, y_cursor, margin + usable_w, y_cursor + box_h + 10)
+            rect_result = page.insert_textbox(rect, text, fontsize=font_size, color=(0.1, 0.1, 0.1), align=0)
+
+            if rect_result < 0:
                 page = pdf_doc.new_page(width=page_w, height=page_h)
                 y_cursor = margin
+                rect = fitz.Rect(margin, y_cursor, margin + usable_w, y_cursor + box_h + 10)
+                page.insert_textbox(rect, text, fontsize=font_size, color=(0.1, 0.1, 0.1), align=0)
 
-            page.insert_text(fitz.Point(margin, y_cursor), text[:120], fontsize=font_size, color=(0.1, 0.1, 0.1))
-            y_cursor += line_height
+            y_cursor += (box_h + 4.0)
+
+        # 2. Process Tables
+        for table in doc.tables:
+            for row in table.rows:
+                cell_texts = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cell_texts:
+                    row_str = " | ".join(cell_texts)
+                    approx_lines = max(1, len(row_str) // 70 + 1)
+                    box_h = approx_lines * 15.0
+                    check_new_page(box_h)
+
+                    rect = fitz.Rect(margin + 10, y_cursor, margin + usable_w - 10, y_cursor + box_h + 10)
+                    page.insert_textbox(rect, row_str, fontsize=10.0, color=(0.2, 0.2, 0.3), align=0)
+                    y_cursor += (box_h + 4.0)
+
+        # 3. Process Embedded Media Images
+        if zipfile.is_zipfile(docx_path):
+            with zipfile.ZipFile(docx_path, 'r') as z:
+                media_files = [f for f in z.namelist() if f.startswith("word/media/")]
+                for m_file in media_files[:5]:
+                    if Path(m_file).suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
+                        try:
+                            img_data = z.read(m_file)
+                            img = Image.open(io.BytesIO(img_data))
+                            w, h = img.size
+                            aspect = h / max(w, 1)
+                            disp_w = min(usable_w * 0.7, 350.0)
+                            disp_h = disp_w * aspect
+
+                            check_new_page(disp_h + 10)
+                            img_rect = fitz.Rect(margin, y_cursor, margin + disp_w, y_cursor + disp_h)
+                            page.insert_image(img_rect, stream=img_data)
+                            y_cursor += (disp_h + 15.0)
+                            img.close()
+                        except Exception:
+                            pass
+
     except Exception:
         try:
-            with zipfile.ZipFile(docx_path, 'r') as z:
-                xml_content = z.read("word/document.xml").decode("utf-8", errors="ignore")
-                import re
-                texts = re.findall(r'<w:t[^>]*>(.*?)</w:t>', xml_content)
-                if texts:
-                    full_txt = " ".join(texts)
-                    page.insert_text(fitz.Point(margin, y_cursor), full_txt[:500], fontsize=11.0)
+            if zipfile.is_zipfile(docx_path):
+                with zipfile.ZipFile(docx_path, 'r') as z:
+                    xml_content = z.read("word/document.xml").decode("utf-8", errors="ignore")
+                    import re
+                    texts = re.findall(r'<w:t[^>]*>(.*?)</w:t>', xml_content)
+                    if texts:
+                        full_txt = " ".join(texts)
+                        rect = fitz.Rect(margin, margin, margin + usable_w, page_h - margin)
+                        page.insert_textbox(rect, full_txt[:2000], fontsize=11.0)
         except Exception:
             pass
 
-    if pdf_doc.page_count == 0:
-        pdf_doc.new_page(width=page_w, height=page_h)
+    if pdf_doc.page_count == 0 or y_cursor == margin:
+        if pdf_doc.page_count == 0:
+            page = pdf_doc.new_page(width=page_w, height=page_h)
+        page.insert_textbox(fitz.Rect(margin, margin, margin + usable_w, margin + 50), "Document Content Exported", fontsize=14.0)
 
     pdf_doc.save(str(pdf_path), deflate=True)
     pdf_doc.close()
@@ -337,49 +403,54 @@ def _pptx_to_pdf_pure_python(pptx_path, pdf_path):
 
 def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=True):
     if not zipfile.is_zipfile(input_path):
-        import shutil
         shutil.copy2(input_path, output_path)
         return
 
-    quality = 30 if extreme else 55
-    max_dim = 900 if extreme else 1450
+    quality = 28 if extreme else 50
+    max_dim = 850 if extreme else 1400
 
     with zipfile.ZipFile(input_path, 'r') as in_zip:
-        with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=5) as out_zip:
-            for item in in_zip.infolist():
-                data = in_zip.read(item.filename)
-                
-                if Path(item.filename).suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
-                    try:
-                        img = Image.open(io.BytesIO(data))
-                        img_format = img.format or ("JPEG" if Path(item.filename).suffix.lower() in ['.jpg', '.jpeg'] else "PNG")
-                        
-                        img.thumbnail((max_dim, max_dim), Image.Resampling.BILINEAR)
+        items = in_zip.infolist()
 
-                        out_buffer = io.BytesIO()
-                        
-                        if img.mode in ("RGBA", "P") or extreme:
+        def process_zip_item(item):
+            data = in_zip.read(item.filename)
+            if Path(item.filename).suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
+                try:
+                    img = Image.open(io.BytesIO(data))
+                    img_format = img.format or ("JPEG" if Path(item.filename).suffix.lower() in ['.jpg', '.jpeg'] else "PNG")
+
+                    img.thumbnail((max_dim, max_dim), Image.Resampling.BILINEAR)
+                    out_buffer = io.BytesIO()
+
+                    if img.mode in ("RGBA", "P") or extreme:
+                        img = img.convert("RGB")
+                        img_format = "JPEG"
+
+                    if img_format.upper() in ["JPEG", "JPG"]:
+                        img.save(out_buffer, format="JPEG", quality=quality, optimize=True)
+                    elif img_format.upper() == "PNG":
+                        if extreme or img.mode != "RGB":
                             img = img.convert("RGB")
-                            img_format = "JPEG"
-                            
-                        if img_format.upper() in ["JPEG", "JPG"]:
-                            img.save(out_buffer, format="JPEG", quality=quality)
-                        elif img_format.upper() == "PNG":
-                            if extreme or img.mode != "RGB":
-                                img = img.convert("RGB")
-                                img.save(out_buffer, format="JPEG", quality=quality)
-                            else:
-                                img.save(out_buffer, format="PNG", compress_level=4)
+                            img.save(out_buffer, format="JPEG", quality=quality, optimize=True)
                         else:
-                            img.save(out_buffer, format=img_format)
-                            
-                        compressed_data = out_buffer.getvalue()
-                        if len(compressed_data) < len(data):
-                            data = compressed_data
-                        img.close()
-                    except Exception:
-                        pass
-                        
+                            img.save(out_buffer, format="PNG", compress_level=4)
+                    else:
+                        img.save(out_buffer, format=img_format)
+
+                    compressed_data = out_buffer.getvalue()
+                    if len(compressed_data) < len(data):
+                        data = compressed_data
+                    img.close()
+                except Exception:
+                    pass
+            return (item, data)
+
+        max_workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            processed_items = list(executor.map(process_zip_item, items))
+
+        with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=4) as out_zip:
+            for item, data in processed_items:
                 out_zip.writestr(item, data)
 
 
@@ -727,20 +798,26 @@ def merge_pdf(request):
 
     try:
         merged_doc = fitz.open()
+        valid_count = 0
 
         for pdf_path, orig_name, is_temp in input_items:
-            if pdf_path.suffix.lower() != ".pdf":
+            if not pdf_path.exists() or pdf_path.suffix.lower() != ".pdf":
                 continue
 
-            doc = fitz.open(pdf_path)
-            merged_doc.insert_pdf(doc)
-            doc.close()
+            try:
+                doc = fitz.open(pdf_path)
+                if doc.page_count > 0:
+                    merged_doc.insert_pdf(doc)
+                    valid_count += 1
+                doc.close()
+            except Exception:
+                pass
 
         if merged_doc.page_count == 0:
             merged_doc.close()
             return Response({"error": "No valid PDF pages found to merge."}, status=400)
 
-        merged_doc.save(str(merged_pdf_path))
+        merged_doc.save(str(merged_pdf_path), deflate=True, garbage=3)
         merged_doc.close()
 
     except Exception as exc:
@@ -755,7 +832,7 @@ def merge_pdf(request):
                 _cleanup_files(pdf_path)
 
     return Response({
-        "message": f"Successfully merged {len(input_items)} PDF files into one document",
+        "message": f"Successfully merged {valid_count} PDF files into one document",
         "file": settings.MEDIA_URL + merged_pdf_path.name
     })
 
@@ -792,8 +869,8 @@ def compress_pdf(request):
             return Response({"error": "PDF document contains no pages."}, status=400)
 
         is_extreme = mode == "extreme"
-        dpi_val = 90 if is_extreme else 115
-        quality_val = 26 if is_extreme else 48
+        dpi_val = 80 if is_extreme else 120
+        quality_val = 25 if is_extreme else 50
 
         new_doc = fitz.open()
 
@@ -820,12 +897,20 @@ def compress_pdf(request):
         pdf_doc.close()
 
         compressed_size = len(compressed_bytes)
-        if compressed_size >= original_size:
-            compressed_bytes = file_bytes
-            compressed_size = original_size
+        if compressed_size >= original_size or compressed_size < 100:
+            doc_orig = fitz.open(stream=file_bytes, filetype="pdf")
+            opt_bytes = doc_orig.tobytes(garbage=4, deflate=True, clean=True)
+            doc_orig.close()
+            if len(opt_bytes) < original_size:
+                compressed_bytes = opt_bytes
+                compressed_size = len(opt_bytes)
+            else:
+                compressed_bytes = file_bytes
+                compressed_size = original_size
+
+        savings_percent = round((1 - (compressed_size / max(original_size, 1))) * 100, 1)
+        if savings_percent < 0:
             savings_percent = 0.0
-        else:
-            savings_percent = round((1 - (compressed_size / max(original_size, 1))) * 100, 1)
 
         with open(compressed_path, "wb") as f:
             f.write(compressed_bytes)
@@ -948,7 +1033,6 @@ def compress_word(request):
         compressed_size = compressed_path.stat().st_size
         if compressed_size >= original_size or compressed_size == 0:
             compressed_path.unlink(missing_ok=True)
-            import shutil
             shutil.copy2(docx_path, compressed_path)
             compressed_size = original_size
             savings_percent = 0.0
@@ -997,7 +1081,6 @@ def compress_ppt(request):
         compressed_size = compressed_path.stat().st_size
         if compressed_size >= original_size or compressed_size == 0:
             compressed_path.unlink(missing_ok=True)
-            import shutil
             shutil.copy2(pptx_path, compressed_path)
             compressed_size = original_size
             savings_percent = 0.0
@@ -1096,19 +1179,48 @@ def pdf_to_excel(request):
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
 
+        total_extracted_rows = 0
+
         for idx, page in enumerate(pdf_doc):
             ws = wb.create_sheet(title=f"Page {idx+1}")
-            text_blocks = page.get_text("blocks")
+            
+            tables = []
+            try:
+                tabs = page.find_tables()
+                if tabs and len(tabs.tables) > 0:
+                    for t in tabs.tables:
+                        tables.append(t.extract())
+            except Exception:
+                pass
 
-            ws.append(["Block ID", "Extracted Content"])
-            for cell in ws[1]:
-                cell.font = header_font
-                cell.fill = header_fill
+            if tables:
+                for tab_data in tables:
+                    for row_idx, row in enumerate(tab_data):
+                        clean_row = [str(cell) if cell is not None else "" for cell in row]
+                        if any(clean_row):
+                            ws.append(clean_row)
+                            total_extracted_rows += 1
+                            if ws.max_row == 1:
+                                for cell in ws[1]:
+                                    cell.font = header_font
+                                    cell.fill = header_fill
+            else:
+                text_blocks = page.get_text("blocks")
+                ws.append(["Block ID", "Extracted Content"])
+                for cell in ws[1]:
+                    cell.font = header_font
+                    cell.fill = header_fill
 
-            for block_id, block in enumerate(text_blocks):
-                content = block[4].strip()
-                if content:
-                    ws.append([f"Block {block_id+1}", content])
+                for block_id, block in enumerate(text_blocks):
+                    content = block[4].strip()
+                    if content:
+                        ws.append([f"Block {block_id+1}", content])
+                        total_extracted_rows += 1
+
+        if len(wb.sheetnames) == 0:
+            ws = wb.create_sheet(title="Sheet 1")
+            ws.append(["Content", "Status"])
+            ws.append(["PDF Document", "No extractable text found"])
 
         pdf_doc.close()
         wb.save(str(excel_path))

@@ -1,7 +1,7 @@
 import api from "../api/axios";
 
 export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB limit
-export const CHUNK_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB per chunk (well below Vercel's 4.5 MB body limit)
+export const CHUNK_SIZE_BYTES = 4 * 1024 * 1024; // 4 MB per chunk for ultra-fast throughput
 
 export const validateFileSize = (fileOrFiles) => {
   if (!fileOrFiles) return null;
@@ -91,9 +91,8 @@ export const uploadFileInChunks = async (file, onProgress = null) => {
     formData.append("filename", file.name);
     formData.append("chunk", chunkBlob, file.name);
 
-    const res = await api.post("upload-chunk/", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+    // DO NOT manually set Content-Type header when passing FormData object in Axios!
+    const res = await api.post("upload-chunk/", formData);
 
     if (onProgress) {
       const percent = Math.round(((chunkIndex + 1) / totalChunks) * 100);
@@ -168,8 +167,7 @@ export const executeApiCall = async (endpoint, fileOrFiles, extraParams = {}, on
       onProgress(60, "Processing file(s) on engine...");
     }
 
-    return await api.post(endpoint, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+    // DO NOT manually set Content-Type header when passing FormData object in Axios!
+    return await api.post(endpoint, formData);
   }
 };
