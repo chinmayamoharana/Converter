@@ -138,9 +138,9 @@ const CompressWord = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "Word compression failed. Please try another DOCX file."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Word compression failed. Please try another DOCX file.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();

@@ -138,9 +138,9 @@ const CompressPdf = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "PDF compression failed. Please try another PDF."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PDF compression failed. Please try another PDF.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();

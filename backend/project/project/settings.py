@@ -2,6 +2,7 @@
 Django settings for project project.
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -84,8 +85,15 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+import tempfile
+
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+if os.environ.get('VERCEL') or not os.access(BASE_DIR, os.W_OK):
+    MEDIA_ROOT = Path(tempfile.gettempdir()) / 'media'
+else:
+    MEDIA_ROOT = BASE_DIR / 'media'
+
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'

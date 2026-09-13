@@ -138,9 +138,9 @@ const CompressPpt = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "PowerPoint compression failed. Please try another PPTX file."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PowerPoint compression failed. Please try another PPTX file.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();

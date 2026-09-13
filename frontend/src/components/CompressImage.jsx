@@ -138,9 +138,9 @@ const CompressImage = () => {
       }
 
     } catch (err) {
-      setError(
-        err.response?.data?.error || "Image compression failed. Please try another image."
-      );
+      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
+      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Image compression failed. Please try another image.");
+      setError(errorText);
       setMessage("");
     } finally {
       cleanupTimers();
