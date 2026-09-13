@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   Presentation,
   UploadCloud,
@@ -44,6 +45,12 @@ const PptToPdf = () => {
       selectedFile.name.endsWith(".ppt");
     if (!isPpt) {
       setError("Invalid file format. Please select a PowerPoint file (.pptx or .ppt).");
+      setFile(null);
+      return;
+    }
+    const sizeErr = validateFileSize(selectedFile);
+    if (sizeErr) {
+      setError(sizeErr);
       setFile(null);
       return;
     }
@@ -97,6 +104,12 @@ const PptToPdf = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(file);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -109,7 +122,7 @@ const PptToPdf = () => {
 
     try {
       const res = await api.post("ppt-to-pdf/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Conversion Complete!");
@@ -132,9 +145,7 @@ const PptToPdf = () => {
       }
 
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PPT to PDF conversion failed. Please try another file.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "PPT to PDF conversion failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();

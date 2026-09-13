@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   Image as ImageIcon,
   UploadCloud,
@@ -48,7 +49,13 @@ const ImageToPdf = () => {
       setError("Please select valid image files (JPG, PNG, WEBP, BMP).");
       return;
     }
-    setFiles((prev) => [...prev, ...validFiles]);
+    const candidateFiles = [...files, ...validFiles];
+    const sizeErr = validateFileSize(candidateFiles);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+    setFiles(candidateFiles);
     setError("");
     setDownload("");
     setMessage("");
@@ -102,6 +109,12 @@ const ImageToPdf = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(files);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
 
@@ -114,7 +127,7 @@ const ImageToPdf = () => {
 
     try {
       const res = await api.post("image-to-pdf/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Conversion Complete!");
@@ -137,9 +150,7 @@ const ImageToPdf = () => {
       }
 
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Image to PDF conversion failed. Please try again.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "Image to PDF conversion failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();

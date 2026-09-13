@@ -93,7 +93,6 @@ def _pdf_has_extractable_text(pdf_path):
 
 
 def _build_image_based_docx(pdf_path, docx_path):
-    temp_images = []
     pdf_document = fitz.open(pdf_path)
 
     try:
@@ -120,19 +119,16 @@ def _build_image_based_docx(pdf_path, docx_path):
                 section.left_margin = Pt(18)
                 section.right_margin = Pt(18)
 
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            image_path = Path(settings.MEDIA_ROOT) / f"{pdf_path.stem}-page-{index + 1}.png"
-            pixmap.save(str(image_path))
-            temp_images.append(image_path)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            img_bytes = pixmap.tobytes("png")
 
             section = document.sections[-1]
             usable_width = section.page_width - section.left_margin - section.right_margin
-            document.add_picture(str(image_path), width=usable_width)
+            document.add_picture(io.BytesIO(img_bytes), width=usable_width)
 
         document.save(docx_path)
     finally:
         pdf_document.close()
-        _cleanup_files(*temp_images)
 
 
 def _docx_to_pdf_pure_python(docx_path, pdf_path):
@@ -383,7 +379,6 @@ def pdf_to_ppt(request):
         return Response({"error": "Please upload a PDF file"}, status=400)
 
     pdf_path, pptx_path = _build_unique_paths(pdf_file.name, ".pptx")
-    temp_images = []
 
     try:
         _save_uploaded_file(pdf_file, pdf_path)
@@ -398,16 +393,9 @@ def pdf_to_ppt(request):
             prs.slide_width = Inches(first_page.rect.width / 72.0)
             prs.slide_height = Inches(first_page.rect.height / 72.0)
 
-        def render_page(idx):
-            page = pdf_doc[idx]
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            return idx, pixmap.tobytes("png")
-
-        max_workers = min(os.cpu_count() or 4, 8)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            rendered_pages = list(executor.map(render_page, range(pdf_doc.page_count)))
-
-        for idx, img_bytes in rendered_pages:
+        for page in pdf_doc:
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            img_bytes = pixmap.tobytes("png")
             slide = prs.slides.add_slide(blank_slide_layout)
             slide.shapes.add_picture(
                 io.BytesIO(img_bytes),
@@ -416,22 +404,22 @@ def pdf_to_ppt(request):
                 width=prs.slide_width,
                 height=prs.slide_height,
             )
+            del pixmap, img_bytes
 
         pdf_doc.close()
         prs.save(str(pptx_path))
     except Exception as exc:
         _cleanup_files(pdf_path, pptx_path)
         return Response(
-            {"error": f"PDF to PPT conversion failed: {exc}"},
+            {"error": f"PDF to PPT conversion failed: {str(exc)}"},
             status=500,
         )
-    finally:
-        _cleanup_files(*temp_images)
 
     return Response({
         "message": "PDF converted to PowerPoint presentation (.pptx)",
         "file": settings.MEDIA_URL + pptx_path.name
     })
+
 
 
 # ---------------- 4. PPT → PDF ----------------

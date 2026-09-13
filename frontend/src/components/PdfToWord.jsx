@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   FileText,
   UploadCloud,
@@ -41,6 +42,12 @@ const PdfToWord = () => {
     if (!selectedFile) return;
     if (selectedFile.type !== "application/pdf" && !selectedFile.name.endsWith(".pdf")) {
       setError("Invalid file format. Please select a valid PDF file (.pdf).");
+      setFile(null);
+      return;
+    }
+    const sizeErr = validateFileSize(selectedFile);
+    if (sizeErr) {
+      setError(sizeErr);
       setFile(null);
       return;
     }
@@ -94,6 +101,12 @@ const PdfToWord = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(file);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -106,7 +119,7 @@ const PdfToWord = () => {
 
     try {
       const res = await api.post("pdf-to-word/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Conversion Complete!");
@@ -130,9 +143,7 @@ const PdfToWord = () => {
       }
 
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Conversion failed. Please verify your PDF file and try again.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "PDF to Word conversion failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();

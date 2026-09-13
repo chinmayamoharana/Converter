@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   Combine,
   UploadCloud,
@@ -47,7 +48,13 @@ const MergePdf = () => {
       setError("Please select valid PDF files (.pdf).");
       return;
     }
-    setFiles((prev) => [...prev, ...validFiles]);
+    const candidateFiles = [...files, ...validFiles];
+    const sizeErr = validateFileSize(candidateFiles);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+    setFiles(candidateFiles);
     setError("");
     setDownload("");
     setMessage("");
@@ -101,6 +108,12 @@ const MergePdf = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(files);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
 
@@ -113,7 +126,7 @@ const MergePdf = () => {
 
     try {
       const res = await api.post("merge-pdf/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Merge Complete!");
@@ -136,9 +149,7 @@ const MergePdf = () => {
       }
 
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PDF Merge failed. Please check your PDF files.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "PDF Merge failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();

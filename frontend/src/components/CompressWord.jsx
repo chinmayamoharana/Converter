@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   Minimize2,
   UploadCloud,
@@ -41,8 +42,14 @@ const CompressWord = () => {
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
-    if (!selectedFile.name.endsWith(".docx")) {
-      setError("Please select a valid Word file (.docx).");
+    if (!selectedFile.name.endsWith(".docx") && !selectedFile.name.endsWith(".doc")) {
+      setError("Please select a valid Word file (.docx or .doc).");
+      setFile(null);
+      return;
+    }
+    const sizeErr = validateFileSize(selectedFile);
+    if (sizeErr) {
+      setError(sizeErr);
       setFile(null);
       return;
     }
@@ -97,6 +104,12 @@ const CompressWord = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(file);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("mode", "extreme");
@@ -110,7 +123,7 @@ const CompressWord = () => {
 
     try {
       const res = await api.post("compress-word/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Compression Complete!");
@@ -138,9 +151,7 @@ const CompressWord = () => {
       }
 
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Word compression failed. Please try another DOCX file.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "Word compression failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();

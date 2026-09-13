@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   FileSpreadsheet,
   UploadCloud,
@@ -41,10 +42,17 @@ const WordToPdf = () => {
     if (!selectedFile) return;
     const isDocx =
       selectedFile.name.endsWith(".docx") ||
+      selectedFile.name.endsWith(".doc") ||
       selectedFile.type ===
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     if (!isDocx) {
       setError("Invalid file format. Please select a Word file (.docx).");
+      setFile(null);
+      return;
+    }
+    const sizeErr = validateFileSize(selectedFile);
+    if (sizeErr) {
+      setError(sizeErr);
       setFile(null);
       return;
     }
@@ -98,6 +106,12 @@ const WordToPdf = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(file);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -110,7 +124,7 @@ const WordToPdf = () => {
 
     try {
       const res = await api.post("word-to-pdf/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Conversion Complete!");
@@ -134,9 +148,7 @@ const WordToPdf = () => {
       }
 
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "Conversion failed. Please check your DOCX document and try again.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "Word to PDF conversion failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   FileSpreadsheet,
   UploadCloud,
@@ -43,6 +44,12 @@ const PdfToExcel = () => {
       selectedFile.type === "application/pdf";
     if (!isPdf) {
       setError("Invalid file format. Please select a PDF file (.pdf).");
+      setFile(null);
+      return;
+    }
+    const sizeErr = validateFileSize(selectedFile);
+    if (sizeErr) {
+      setError(sizeErr);
       setFile(null);
       return;
     }
@@ -96,6 +103,12 @@ const PdfToExcel = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(file);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -108,7 +121,7 @@ const PdfToExcel = () => {
 
     try {
       const res = await api.post("pdf-to-excel/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Extraction Complete!");
@@ -128,9 +141,7 @@ const PdfToExcel = () => {
       const existing = JSON.parse(localStorage.getItem("converter_history") || "[]");
       localStorage.setItem("converter_history", JSON.stringify([historyItem, ...existing.slice(0, 9)]));
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PDF to Excel extraction failed. Please try again.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "PDF to Excel extraction failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();

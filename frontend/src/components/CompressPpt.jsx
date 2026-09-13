@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
+import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
 import {
   Minimize2,
   UploadCloud,
@@ -41,8 +42,14 @@ const CompressPpt = () => {
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
-    if (!selectedFile.name.endsWith(".pptx")) {
-      setError("Please select a valid PowerPoint file (.pptx).");
+    if (!selectedFile.name.endsWith(".pptx") && !selectedFile.name.endsWith(".ppt")) {
+      setError("Please select a valid PowerPoint file (.pptx or .ppt).");
+      setFile(null);
+      return;
+    }
+    const sizeErr = validateFileSize(selectedFile);
+    if (sizeErr) {
+      setError(sizeErr);
       setFile(null);
       return;
     }
@@ -97,6 +104,12 @@ const CompressPpt = () => {
       return;
     }
 
+    const sizeErr = validateFileSize(file);
+    if (sizeErr) {
+      setError(sizeErr);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("mode", "extreme");
@@ -110,7 +123,7 @@ const CompressPpt = () => {
 
     try {
       const res = await api.post("compress-ppt/", formData);
-      const downloadUrl = "http://127.0.0.1:8000" + res.data.file;
+      const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);
       setProgressStatus("Compression Complete!");
@@ -138,9 +151,7 @@ const CompressPpt = () => {
       }
 
     } catch (err) {
-      const rawErr = err.response?.data?.error || err.response?.data?.detail || err.message;
-      const errorText = typeof rawErr === "string" ? rawErr : (typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : "PowerPoint compression failed. Please try another PPTX file.");
-      setError(errorText);
+      setError(formatErrorMessage(err, "PowerPoint compression failed. Please try again."));
       setMessage("");
     } finally {
       cleanupTimers();
