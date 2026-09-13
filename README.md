@@ -120,8 +120,3 @@ npm run dev
 | `/api/split-pdf/` | `POST` | `.pdf` | Splits multi-page PDF into Zip archive |
 | `/api/rotate-pdf/` | `POST` | `.pdf` | Rotates PDF pages by requested angle |
 
----
-
-## 📜 License
-
-Distributed under the MIT License. Designed and developed by **Chinmaya Moharana**.
