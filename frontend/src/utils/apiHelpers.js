@@ -1,4 +1,4 @@
-export const MAX_FILE_SIZE_BYTES = 4.5 * 1024 * 1024; // 4.5 MB Vercel limit
+export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB limit
 
 export const validateFileSize = (fileOrFiles) => {
   if (!fileOrFiles) return null;
@@ -8,16 +8,16 @@ export const validateFileSize = (fileOrFiles) => {
     let totalSize = 0;
     for (const f of files) {
       if (f.size > MAX_FILE_SIZE_BYTES) {
-        return `File "${f.name}" (${(f.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB server limit. Please choose a smaller file.`;
+        return `File "${f.name}" (${(f.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 20 MB limit. Please choose a smaller file.`;
       }
       totalSize += f.size;
     }
     if (totalSize > MAX_FILE_SIZE_BYTES) {
-      return `Total upload size (${(totalSize / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB server limit. Please select fewer or smaller files.`;
+      return `Total upload size (${(totalSize / (1024 * 1024)).toFixed(1)} MB) exceeds the 20 MB limit. Please select fewer or smaller files.`;
     }
   } else if (fileOrFiles instanceof File) {
     if (fileOrFiles.size > MAX_FILE_SIZE_BYTES) {
-      return `File size (${(fileOrFiles.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB server limit. Please upload a smaller file (under 4.5 MB).`;
+      return `File size (${(fileOrFiles.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 20 MB limit. Please upload a file under 20 MB.`;
     }
   }
 
@@ -27,9 +27,9 @@ export const validateFileSize = (fileOrFiles) => {
 export const formatErrorMessage = (err, defaultMsg = "Processing failed. Please check your input and try again.") => {
   if (!err) return defaultMsg;
 
-  // Handle 413 Payload Too Large (Vercel edge limit)
+  // Handle 413 Payload Too Large
   if (err.response?.status === 413 || (err.message && err.message.includes("413"))) {
-    return "File size exceeds the 4.5 MB Vercel server limit. Please upload a smaller file.";
+    return "File size exceeds the 20 MB server upload limit. Please upload a smaller file.";
   }
 
   // Handle 500 Server Error
