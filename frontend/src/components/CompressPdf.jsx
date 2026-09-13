@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldAlert,
+  ShieldCheck,
   Zap,
 } from "lucide-react";
 

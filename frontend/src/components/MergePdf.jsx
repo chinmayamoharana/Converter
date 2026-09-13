@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldAlert,
+  ShieldCheck,
   Trash2,
   MoveUp,
   MoveDown,
