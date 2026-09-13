@@ -1,9 +1,10 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   FileSpreadsheet,
   UploadCloud,
+  FileCheck,
   CheckCircle2,
   AlertCircle,
   Download,
@@ -12,7 +13,7 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  FileText,
+  ShieldAlert,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -39,11 +40,8 @@ const PdfToExcel = () => {
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
-    const isPdf =
-      selectedFile.name.endsWith(".pdf") ||
-      selectedFile.type === "application/pdf";
-    if (!isPdf) {
-      setError("Invalid file format. Please select a PDF file (.pdf).");
+    if (selectedFile.type !== "application/pdf" && !selectedFile.name.endsWith(".pdf")) {
+      setError("Invalid file format. Please select a valid PDF file (.pdf).");
       setFile(null);
       return;
     }
@@ -77,26 +75,6 @@ const PdfToExcel = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Uploading PDF document...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Extracting tabular data & text blocks...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Formatting Excel workbook (.xlsx)...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -109,18 +87,19 @@ const PdfToExcel = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing PDF upload...");
 
     try {
-      const res = await api.post("pdf-to-excel/", formData);
+      const res = await executeApiCall("pdf-to-excel/", file, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

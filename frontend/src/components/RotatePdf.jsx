@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   RotateCw,
   UploadCloud,
@@ -78,26 +78,6 @@ const RotatePdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(25);
-    setProgressStatus("Reading PDF document pages...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(70);
-      setProgressStatus(`Rotating pages by ${angle}°...`);
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(95);
-      setProgressStatus("Rebuilding PDF document...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleRotate = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -110,19 +90,18 @@ const RotatePdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("angle", angle);
-
     setIsRotating(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing PDF upload...");
 
     try {
-      const res = await api.post("rotate-pdf/", formData);
+      const res = await executeApiCall("rotate-pdf/", file, { angle }, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

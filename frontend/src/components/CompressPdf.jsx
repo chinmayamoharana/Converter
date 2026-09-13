@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   Minimize2,
   UploadCloud,
@@ -13,8 +13,8 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldCheck,
-  TrendingDown,
+  ShieldAlert,
+  Zap,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -78,26 +78,6 @@ const CompressPdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(15);
-    setProgressStatus("Reading PDF document...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(55);
-      setProgressStatus("Optimizing streams & graphics...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(85);
-      setProgressStatus("Saving compressed PDF...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -110,19 +90,20 @@ const CompressPdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("mode", "extreme");
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setStats(null);
+    setProgress(10);
+    setProgressStatus("Preparing PDF for compression...");
 
     try {
-      const res = await api.post("compress-pdf/", formData);
+      const res = await executeApiCall("compress-pdf/", file, { mode: "extreme" }, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

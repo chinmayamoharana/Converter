@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   FileSpreadsheet,
   UploadCloud,
@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -43,10 +43,12 @@ const ExcelToPdf = () => {
     const isExcel =
       selectedFile.name.endsWith(".xlsx") ||
       selectedFile.name.endsWith(".xls") ||
-      selectedFile.type.includes("spreadsheet") ||
-      selectedFile.type.includes("excel");
+      selectedFile.type ===
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      selectedFile.type === "application/vnd.ms-excel";
+
     if (!isExcel) {
-      setError("Invalid file format. Please select an Excel file (.xlsx or .xls).");
+      setError("Invalid file format. Please select an Excel spreadsheet (.xlsx or .xls).");
       setFile(null);
       return;
     }
@@ -80,26 +82,6 @@ const ExcelToPdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Uploading Excel workbook...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Parsing worksheets & table structure...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Generating high-resolution PDF pages...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select an Excel (.xlsx) file first.");
@@ -112,18 +94,19 @@ const ExcelToPdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing Excel spreadsheet upload...");
 
     try {
-      const res = await api.post("excel-to-pdf/", formData);
+      const res = await executeApiCall("excel-to-pdf/", file, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

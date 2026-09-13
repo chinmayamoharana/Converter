@@ -1,8 +1,8 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
-  FileSpreadsheet,
+  FileText,
   UploadCloud,
   FileCheck,
   CheckCircle2,
@@ -13,7 +13,8 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldCheck,
+  ShieldAlert,
+  FileType,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -40,13 +41,14 @@ const WordToPdf = () => {
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
-    const isDocx =
-      selectedFile.name.endsWith(".docx") ||
-      selectedFile.name.endsWith(".doc") ||
+    const isWord =
       selectedFile.type ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    if (!isDocx) {
-      setError("Invalid file format. Please select a Word file (.docx).");
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      selectedFile.type === "application/msword" ||
+      /\.(docx|doc)$/i.test(selectedFile.name);
+
+    if (!isWord) {
+      setError("Invalid file format. Please select a valid Word file (.docx or .doc).");
       setFile(null);
       return;
     }
@@ -80,26 +82,6 @@ const WordToPdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Uploading Word document...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Converting typography, tables & images...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Building final PDF document...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select a Word (.docx) file first.");
@@ -112,18 +94,19 @@ const WordToPdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing Word file upload...");
 
     try {
-      const res = await api.post("word-to-pdf/", formData);
+      const res = await executeApiCall("word-to-pdf/", file, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

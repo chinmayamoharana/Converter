@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   Presentation,
   UploadCloud,
@@ -41,10 +41,13 @@ const PptToPdf = () => {
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
     const isPpt =
-      selectedFile.name.endsWith(".pptx") ||
-      selectedFile.name.endsWith(".ppt");
+      /\.(pptx|ppt)$/i.test(selectedFile.name) ||
+      selectedFile.type ===
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+      selectedFile.type === "application/vnd.ms-powerpoint";
+
     if (!isPpt) {
-      setError("Invalid file format. Please select a PowerPoint file (.pptx or .ppt).");
+      setError("Invalid file format. Please select a valid PowerPoint file (.pptx or .ppt).");
       setFile(null);
       return;
     }
@@ -78,26 +81,6 @@ const PptToPdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Uploading presentation deck...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Processing slides and vector graphics...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Generating output PDF document...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select a PowerPoint file first.");
@@ -110,18 +93,19 @@ const PptToPdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing PowerPoint upload...");
 
     try {
-      const res = await api.post("ppt-to-pdf/", formData);
+      const res = await executeApiCall("ppt-to-pdf/", file, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

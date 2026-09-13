@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   Scissors,
   UploadCloud,
@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
+  ShieldAlert,
   FileText,
 } from "lucide-react";
 
@@ -40,11 +41,8 @@ const SplitPdf = () => {
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
-    const isPdf =
-      selectedFile.name.endsWith(".pdf") ||
-      selectedFile.type === "application/pdf";
-    if (!isPdf) {
-      setError("Invalid file format. Please select a PDF file (.pdf).");
+    if (selectedFile.type !== "application/pdf" && !selectedFile.name.endsWith(".pdf")) {
+      setError("Invalid file format. Please select a valid PDF file (.pdf).");
       setFile(null);
       return;
     }
@@ -78,26 +76,6 @@ const SplitPdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Analyzing PDF structure...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Splitting PDF pages into single documents...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Packaging output pages into ZIP file...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleSplit = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -110,18 +88,19 @@ const SplitPdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     setIsSplitting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing PDF upload...");
 
     try {
-      const res = await api.post("split-pdf/", formData);
+      const res = await executeApiCall("split-pdf/", file, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

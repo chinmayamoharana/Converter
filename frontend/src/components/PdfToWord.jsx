@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   FileText,
   UploadCloud,
@@ -75,26 +75,6 @@ const PdfToWord = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(15);
-    setProgressStatus("Uploading PDF file to engine...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(50);
-      setProgressStatus("Analyzing pages, tables & typography...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(85);
-      setProgressStatus("Formatting output Word (.docx) document...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -107,18 +87,19 @@ const PdfToWord = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing PDF upload...");
 
     try {
-      const res = await api.post("pdf-to-word/", formData);
+      const res = await executeApiCall("pdf-to-word/", file, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   Image as ImageIcon,
   UploadCloud,
@@ -83,26 +83,6 @@ const ImageToPdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Processing uploaded images...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(65);
-      setProgressStatus("Optimizing color spaces & margins...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Compiling images into PDF document...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (files.length === 0) {
       setError("Please select at least one image file.");
@@ -115,18 +95,19 @@ const ImageToPdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    files.forEach((f) => formData.append("files", f));
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing image file(s) upload...");
 
     try {
-      const res = await api.post("image-to-pdf/", formData);
+      const res = await executeApiCall("image-to-pdf/", files, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

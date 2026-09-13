@@ -16,10 +16,12 @@ from .views import (
     pdf_to_excel,
     split_pdf,
     rotate_pdf,
+    upload_chunk,
 )
 
 urlpatterns = [
     path('health/', health_check),
+    path('upload-chunk/', upload_chunk),
     path('pdf-to-word/', pdf_to_word),
     path('word-to-pdf/', word_to_pdf),
     path('pdf-to-ppt/', pdf_to_ppt),

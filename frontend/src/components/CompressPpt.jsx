@@ -1,8 +1,8 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
-  Minimize2,
+  Presentation,
   UploadCloud,
   FileCheck,
   CheckCircle2,
@@ -14,7 +14,7 @@ import {
   Sparkles,
   ArrowRight,
   ShieldCheck,
-  TrendingDown,
+  Zap,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -32,18 +32,19 @@ const CompressPpt = () => {
   const [error, setError] = useState("");
   const [isConverting, setIsConverting] = useState(false);
   const [message, setMessage] = useState("");
-  const [stats, setStats] = useState(null);
   const [progress, setProgress] = useState(0);
   const [progressStatus, setProgressStatus] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [stats, setStats] = useState(null);
 
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
-    if (!selectedFile.name.endsWith(".pptx") && !selectedFile.name.endsWith(".ppt")) {
-      setError("Please select a valid PowerPoint file (.pptx or .ppt).");
+    const isPpt = /\.(pptx|ppt)$/i.test(selectedFile.name);
+    if (!isPpt) {
+      setError("Invalid file format. Please select a valid PowerPoint deck (.pptx or .ppt).");
       setFile(null);
       return;
     }
@@ -78,26 +79,6 @@ const CompressPpt = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Reading presentation deck package...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Optimizing slide graphics & media...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Repackaging compressed PPTX presentation...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select a PowerPoint file first.");
@@ -110,19 +91,20 @@ const CompressPpt = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("mode", "extreme");
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setStats(null);
+    setProgress(10);
+    setProgressStatus("Preparing PowerPoint for compression...");
 
     try {
-      const res = await api.post("compress-ppt/", formData);
+      const res = await executeApiCall("compress-ppt/", file, { mode: "extreme" }, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

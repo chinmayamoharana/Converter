@@ -1,8 +1,8 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
-  Minimize2,
+  FileText,
   UploadCloud,
   FileCheck,
   CheckCircle2,
@@ -14,7 +14,7 @@ import {
   Sparkles,
   ArrowRight,
   ShieldCheck,
-  TrendingDown,
+  Zap,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -32,18 +32,19 @@ const CompressWord = () => {
   const [error, setError] = useState("");
   const [isConverting, setIsConverting] = useState(false);
   const [message, setMessage] = useState("");
-  const [stats, setStats] = useState(null);
   const [progress, setProgress] = useState(0);
   const [progressStatus, setProgressStatus] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [stats, setStats] = useState(null);
 
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
-    if (!selectedFile.name.endsWith(".docx") && !selectedFile.name.endsWith(".doc")) {
-      setError("Please select a valid Word file (.docx or .doc).");
+    const isWord = /\.(docx|doc)$/i.test(selectedFile.name);
+    if (!isWord) {
+      setError("Invalid file format. Please select a valid Word document (.docx or .doc).");
       setFile(null);
       return;
     }
@@ -78,26 +79,6 @@ const CompressWord = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Reading Word document package...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Optimizing embedded images & media...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Repackaging compressed DOCX file...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (!file) {
       setError("Please select a Word file first.");
@@ -110,19 +91,20 @@ const CompressWord = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("mode", "extreme");
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setStats(null);
+    setProgress(10);
+    setProgressStatus("Preparing Word file for compression...");
 
     try {
-      const res = await api.post("compress-word/", formData);
+      const res = await executeApiCall("compress-word/", file, { mode: "extreme" }, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

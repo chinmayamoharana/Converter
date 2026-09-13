@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import api from "../api/axios";
-import { validateFileSize, formatErrorMessage, getDownloadUrl } from "../utils/apiHelpers";
+import { validateFileSize, formatErrorMessage, getDownloadUrl, executeApiCall } from "../utils/apiHelpers";
 import {
   Combine,
   UploadCloud,
@@ -13,10 +13,10 @@ import {
   RefreshCw,
   Sparkles,
   ArrowRight,
-  ShieldCheck,
-  FileText,
-  X,
-  Plus,
+  ShieldAlert,
+  Trash2,
+  MoveUp,
+  MoveDown,
 } from "lucide-react";
 
 const formatBytes = (bytes, decimals = 2) => {
@@ -43,25 +43,47 @@ const MergePdf = () => {
 
   const handleFilesSelect = (selectedFiles) => {
     if (!selectedFiles || selectedFiles.length === 0) return;
-    const validFiles = Array.from(selectedFiles).filter((f) => f.name.endsWith(".pdf"));
-    if (validFiles.length === 0) {
-      setError("Please select valid PDF files (.pdf).");
-      return;
+
+    const fileArray = Array.from(selectedFiles);
+    const validPdfs = fileArray.filter(
+      (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
+    );
+
+    if (validPdfs.length !== fileArray.length) {
+      setError("Some selected files were ignored because they are not valid PDFs (.pdf).");
+    } else {
+      setError("");
     }
-    const candidateFiles = [...files, ...validFiles];
-    const sizeErr = validateFileSize(candidateFiles);
+
+    const updatedList = [...files, ...validPdfs];
+    const sizeErr = validateFileSize(updatedList);
     if (sizeErr) {
       setError(sizeErr);
       return;
     }
-    setFiles(candidateFiles);
-    setError("");
+
+    setFiles(updatedList);
     setDownload("");
     setMessage("");
   };
 
-  const removeFile = (index) => {
-    setFiles((prev) => prev.filter((_, idx) => idx !== index));
+  const handleRemoveFile = (index) => {
+    const updated = files.filter((_, i) => i !== index);
+    setFiles(updated);
+    if (updated.length < 2) {
+      setError("Please select at least 2 PDF files to merge.");
+    } else {
+      setError("");
+    }
+  };
+
+  const handleMoveFile = (index, direction) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= files.length) return;
+    const updated = [...files];
+    const [moved] = updated.splice(index, 1);
+    updated.splice(newIndex, 0, moved);
+    setFiles(updated);
   };
 
   const handleDragOver = (e) => {
@@ -82,26 +104,6 @@ const MergePdf = () => {
     }
   };
 
-  const simulateProgress = () => {
-    setProgress(20);
-    setProgressStatus("Reading PDF documents...");
-
-    const timer1 = setTimeout(() => {
-      setProgress(60);
-      setProgressStatus("Merging document pages in sequence...");
-    }, 100);
-
-    const timer2 = setTimeout(() => {
-      setProgress(90);
-      setProgressStatus("Saving consolidated PDF...");
-    }, 250);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
   const handleConvert = async () => {
     if (files.length < 2) {
       setError("Please select at least 2 PDF files to merge.");
@@ -114,18 +116,19 @@ const MergePdf = () => {
       return;
     }
 
-    const formData = new FormData();
-    files.forEach((f) => formData.append("files", f));
-
     setIsConverting(true);
     setError("");
     setDownload("");
     setMessage("");
-
-    const cleanupTimers = simulateProgress();
+    setProgress(10);
+    setProgressStatus("Preparing chunked upload for selected PDF files...");
 
     try {
-      const res = await api.post("merge-pdf/", formData);
+      const res = await executeApiCall("merge-pdf/", files, {}, (pct, statusText) => {
+        setProgress(pct);
+        if (statusText) setProgressStatus(statusText);
+      });
+
       const downloadUrl = getDownloadUrl(res.data.file);
 
       setProgress(100);

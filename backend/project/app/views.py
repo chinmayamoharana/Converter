@@ -21,8 +21,6 @@ from rest_framework.response import Response
 # Ensure media folder exists
 os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
 
-
-
 _last_purge_time = 0
 
 
@@ -43,7 +41,6 @@ def _purge_old_media_files(max_age_hours=1):
                     pass
     except Exception:
         pass
-
 
 
 def _build_unique_paths(upload_name, output_extension):
@@ -80,6 +77,83 @@ def _cleanup_files(*paths):
                 Path(path).unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+def _get_single_input_path(request, param_name='file'):
+    """
+    Returns (input_path, original_filename, is_temp_file).
+    Supports:
+    1. Pre-assembled file path sent in request.data / request.POST ('file_path' or param_name + '_path')
+    2. Direct file upload in request.FILES.get(param_name) or request.FILES.get('file')
+    """
+    _purge_old_media_files()
+    file_path_str = (
+        request.data.get('file_path') or 
+        request.POST.get('file_path') or 
+        request.data.get(f"{param_name}_path") or 
+        request.POST.get(f"{param_name}_path")
+    )
+    if file_path_str:
+        p = Path(file_path_str)
+        if p.exists():
+            return p, p.name, False
+
+    uploaded = request.FILES.get(param_name) or request.FILES.get('file')
+    if uploaded:
+        original_name = Path(uploaded.name).name
+        stem = Path(original_name).stem or "file"
+        suffix = Path(original_name).suffix.lower()
+        unique_id = uuid4().hex[:8]
+        target_path = Path(settings.MEDIA_ROOT) / f"{stem}-{unique_id}-in{suffix}"
+        _save_uploaded_file(uploaded, target_path)
+        return target_path, original_name, True
+
+    return None, None, False
+
+
+def _get_multiple_input_paths(request, param_name='files'):
+    """
+    Returns list of tuples: [(input_path, original_filename, is_temp_file), ...]
+    Supports:
+    1. Pre-assembled file paths sent in request.data / POST ('file_paths' or list)
+    2. Direct file uploads in request.FILES.getlist(param_name) or request.FILES.getlist('files')
+    """
+    _purge_old_media_files()
+    results = []
+
+    file_paths = (
+        request.data.get('file_paths') or 
+        request.POST.get('file_paths')
+    )
+    if isinstance(file_paths, str):
+        import json
+        try:
+            file_paths = json.loads(file_paths)
+        except Exception:
+            file_paths = [file_paths]
+
+    if isinstance(file_paths, list) and len(file_paths) > 0:
+        for fp in file_paths:
+            if fp and isinstance(fp, str):
+                p = Path(fp)
+                if p.exists():
+                    results.append((p, p.name, False))
+        if results:
+            return results
+
+    files = request.FILES.getlist(param_name) or request.FILES.getlist('files') or ([request.FILES.get('file')] if request.FILES.get('file') else [])
+    for uploaded in files:
+        if not uploaded:
+            continue
+        original_name = Path(uploaded.name).name
+        stem = Path(original_name).stem or "file"
+        suffix = Path(original_name).suffix.lower()
+        unique_id = uuid4().hex[:8]
+        target_path = Path(settings.MEDIA_ROOT) / f"{stem}-{unique_id}-in{suffix}"
+        _save_uploaded_file(uploaded, target_path)
+        results.append((target_path, original_name, True))
+
+    return results
 
 
 def _pdf_has_extractable_text(pdf_path):
@@ -169,7 +243,6 @@ def _pdf_to_docx_pure_python(pdf_path, docx_path):
         document.save(str(docx_path))
     finally:
         pdf_doc.close()
-
 
 
 def _docx_to_pdf_pure_python(docx_path, pdf_path):
@@ -262,7 +335,6 @@ def _pptx_to_pdf_pure_python(pptx_path, pdf_path):
     pdf_doc.close()
 
 
-
 def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=True):
     if not zipfile.is_zipfile(input_path):
         import shutil
@@ -311,8 +383,6 @@ def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=
                 out_zip.writestr(item, data)
 
 
-
-
 # ---------------- HEALTH CHECK ----------------
 @api_view(['GET'])
 def health_check(request):
@@ -325,32 +395,82 @@ def health_check(request):
     })
 
 
+# ---------------- UPLOAD CHUNK ----------------
+@api_view(['POST'])
+def upload_chunk(request):
+    upload_id = request.POST.get('upload_id') or request.data.get('upload_id')
+    chunk_index = request.POST.get('chunk_index') or request.data.get('chunk_index')
+    total_chunks = request.POST.get('total_chunks') or request.data.get('total_chunks')
+    filename = request.POST.get('filename') or request.data.get('filename') or "file.bin"
+    chunk_file = request.FILES.get('chunk')
+
+    if not upload_id or chunk_index is None or not chunk_file:
+        return Response({"error": "Missing upload parameters or chunk file"}, status=400)
+
+    try:
+        chunk_index = int(chunk_index)
+        total_chunks = int(total_chunks) if total_chunks else 1
+    except (ValueError, TypeError):
+        return Response({"error": "Invalid chunk index or total chunks"}, status=400)
+
+    safe_filename = Path(filename).name
+    stem = Path(safe_filename).stem or "upload"
+    suffix = Path(safe_filename).suffix.lower()
+
+    assembled_name = f"chunked-{upload_id[:12]}-{stem}{suffix}"
+    assembled_path = Path(settings.MEDIA_ROOT) / assembled_name
+
+    try:
+        _purge_old_media_files()
+        mode = "wb" if chunk_index == 0 else "ab"
+
+        with open(assembled_path, mode) as target:
+            for chunk_data in chunk_file.chunks():
+                target.write(chunk_data)
+
+        if chunk_index == total_chunks - 1:
+            return Response({
+                "status": "complete",
+                "file_path": str(assembled_path),
+                "filename": safe_filename,
+                "file_size": assembled_path.stat().st_size
+            })
+        else:
+            return Response({
+                "status": "chunk_received",
+                "chunk_index": chunk_index,
+                "total_chunks": total_chunks
+            })
+    except Exception as exc:
+        return Response({"error": f"Chunk upload failed: {str(exc)}"}, status=500)
+
+
 # ---------------- 1. PDF → WORD ----------------
 @api_view(['POST'])
 def pdf_to_word(request):
-    pdf_file = request.FILES.get('file')
+    pdf_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not pdf_file:
+    if not pdf_path or not pdf_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(pdf_file.name).suffix.lower() != ".pdf":
+    if pdf_path.suffix.lower() != ".pdf":
+        if is_temp: _cleanup_files(pdf_path)
         return Response({"error": "Please upload a PDF file"}, status=400)
 
-    pdf_path, docx_path = _build_unique_paths(pdf_file.name, ".docx")
+    _, docx_path = _build_unique_paths(original_name, ".docx")
 
     try:
-        _save_uploaded_file(pdf_file, pdf_path)
         _pdf_to_docx_pure_python(pdf_path, docx_path)
         message = "PDF converted to Word document (.docx) successfully"
-
     except Exception as exc:
-        _cleanup_files(pdf_path, docx_path)
+        _cleanup_files(docx_path)
         return Response(
             {"error": f"PDF to Word conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
-        _cleanup_files(pdf_path)
+        if is_temp:
+            _cleanup_files(pdf_path)
 
     return Response({
         "message": message,
@@ -361,27 +481,28 @@ def pdf_to_word(request):
 # ---------------- 2. WORD → PDF ----------------
 @api_view(['POST'])
 def word_to_pdf(request):
-    word_file = request.FILES.get("file")
+    word_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not word_file:
+    if not word_path or not word_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(word_file.name).suffix.lower() not in [".docx", ".doc"]:
+    if word_path.suffix.lower() not in [".docx", ".doc"]:
+        if is_temp: _cleanup_files(word_path)
         return Response({"error": "Please upload a DOCX/DOC file"}, status=400)
 
-    word_path, pdf_path = _build_unique_paths(word_file.name, ".pdf")
+    _, pdf_path = _build_unique_paths(original_name, ".pdf")
 
     try:
-        _save_uploaded_file(word_file, word_path)
         _docx_to_pdf_pure_python(word_path, pdf_path)
     except Exception as exc:
-        _cleanup_files(word_path, pdf_path)
+        _cleanup_files(pdf_path)
         return Response(
             {"error": f"Word to PDF conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
-        _cleanup_files(word_path)
+        if is_temp:
+            _cleanup_files(word_path)
 
     return Response({
         "message": "Word converted to PDF document",
@@ -392,19 +513,18 @@ def word_to_pdf(request):
 # ---------------- 3. PDF → PPT ----------------
 @api_view(['POST'])
 def pdf_to_ppt(request):
-    pdf_file = request.FILES.get("file")
+    pdf_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not pdf_file:
+    if not pdf_path or not pdf_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(pdf_file.name).suffix.lower() != ".pdf":
+    if pdf_path.suffix.lower() != ".pdf":
+        if is_temp: _cleanup_files(pdf_path)
         return Response({"error": "Please upload a PDF file"}, status=400)
 
-    pdf_path, pptx_path = _build_unique_paths(pdf_file.name, ".pptx")
+    _, pptx_path = _build_unique_paths(original_name, ".pptx")
 
     try:
-        _save_uploaded_file(pdf_file, pdf_path)
-
         pdf_doc = fitz.open(pdf_path)
         prs = Presentation()
         blank_slide_layout = prs.slide_layouts[6]
@@ -431,11 +551,14 @@ def pdf_to_ppt(request):
         pdf_doc.close()
         prs.save(str(pptx_path))
     except Exception as exc:
-        _cleanup_files(pdf_path, pptx_path)
+        _cleanup_files(pptx_path)
         return Response(
             {"error": f"PDF to PPT conversion failed: {str(exc)}"},
             status=500,
         )
+    finally:
+        if is_temp:
+            _cleanup_files(pdf_path)
 
     return Response({
         "message": "PDF converted to PowerPoint presentation (.pptx)",
@@ -443,31 +566,31 @@ def pdf_to_ppt(request):
     })
 
 
-
 # ---------------- 4. PPT → PDF ----------------
 @api_view(['POST'])
 def ppt_to_pdf(request):
-    ppt_file = request.FILES.get("file")
+    ppt_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not ppt_file:
+    if not ppt_path or not ppt_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(ppt_file.name).suffix.lower() not in [".pptx", ".ppt"]:
+    if ppt_path.suffix.lower() not in [".pptx", ".ppt"]:
+        if is_temp: _cleanup_files(ppt_path)
         return Response({"error": "Please upload a PPT/PPTX file"}, status=400)
 
-    ppt_path, pdf_path = _build_unique_paths(ppt_file.name, ".pdf")
+    _, pdf_path = _build_unique_paths(original_name, ".pdf")
 
     try:
-        _save_uploaded_file(ppt_file, ppt_path)
         _pptx_to_pdf_pure_python(ppt_path, pdf_path)
     except Exception as exc:
-        _cleanup_files(ppt_path, pdf_path)
+        _cleanup_files(pdf_path)
         return Response(
             {"error": f"PPT to PDF conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
-        _cleanup_files(ppt_path)
+        if is_temp:
+            _cleanup_files(ppt_path)
 
     return Response({
         "message": "PowerPoint converted to PDF document",
@@ -478,29 +601,22 @@ def ppt_to_pdf(request):
 # ---------------- 5. IMAGE → PDF ----------------
 @api_view(['POST'])
 def image_to_pdf(request):
-    files = request.FILES.getlist("files") or [request.FILES.get("file")]
-    files = [f for f in files if f is not None]
+    input_items = _get_multiple_input_paths(request, 'files')
 
-    if not files:
+    if not input_items:
         return Response({"error": "No image files uploaded"}, status=400)
 
     out_name = f"images_converted-{uuid4().hex[:8]}.pdf"
     pdf_path = Path(settings.MEDIA_ROOT) / out_name
-
-    temp_files = []
     pil_images = []
 
     try:
-        for idx, img_file in enumerate(files):
-            suffix = Path(img_file.name).suffix.lower()
+        for img_path, orig_name, is_temp in input_items:
+            suffix = img_path.suffix.lower()
             if suffix not in [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"]:
                 continue
 
-            temp_img_path = Path(settings.MEDIA_ROOT) / f"temp_{uuid4().hex[:6]}{suffix}"
-            _save_uploaded_file(img_file, temp_img_path)
-            temp_files.append(temp_img_path)
-
-            img = Image.open(temp_img_path)
+            img = Image.open(img_path)
             if img.mode != "RGB":
                 img = img.convert("RGB")
             pil_images.append(img)
@@ -517,13 +633,15 @@ def image_to_pdf(request):
             img.close()
 
     except Exception as exc:
-        _cleanup_files(pdf_path, *temp_files)
+        _cleanup_files(pdf_path)
         return Response(
             {"error": f"Image to PDF conversion failed: {exc}"},
             status=500,
         )
     finally:
-        _cleanup_files(*temp_files)
+        for img_path, orig_name, is_temp in input_items:
+            if is_temp:
+                _cleanup_files(img_path)
 
     return Response({
         "message": f"Successfully converted {len(pil_images)} image(s) to PDF",
@@ -534,18 +652,16 @@ def image_to_pdf(request):
 # ---------------- 6. PDF → IMAGE ----------------
 @api_view(['POST'])
 def pdf_to_image(request):
-    pdf_file = request.FILES.get("file")
+    pdf_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not pdf_file:
+    if not pdf_path or not pdf_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(pdf_file.name).suffix.lower() != ".pdf":
+    if pdf_path.suffix.lower() != ".pdf":
+        if is_temp: _cleanup_files(pdf_path)
         return Response({"error": "Please upload a PDF file"}, status=400)
 
-    pdf_path, _ = _build_unique_paths(pdf_file.name, ".pdf")
-
     try:
-        _save_uploaded_file(pdf_file, pdf_path)
         pdf_doc = fitz.open(pdf_path)
         total_pages = pdf_doc.page_count
 
@@ -594,34 +710,29 @@ def pdf_to_image(request):
             status=500,
         )
     finally:
-        _cleanup_files(pdf_path)
+        if is_temp:
+            _cleanup_files(pdf_path)
 
 
 # ---------------- 7. MERGE PDF ----------------
 @api_view(['POST'])
 def merge_pdf(request):
-    files = request.FILES.getlist("files") or [request.FILES.get("file")]
-    files = [f for f in files if f is not None]
+    input_items = _get_multiple_input_paths(request, 'files')
 
-    if len(files) < 2:
+    if len(input_items) < 2:
         return Response({"error": "Please upload at least 2 PDF files to merge."}, status=400)
 
     out_name = f"merged-{uuid4().hex[:8]}.pdf"
     merged_pdf_path = Path(settings.MEDIA_ROOT) / out_name
-    temp_pdfs = []
 
     try:
         merged_doc = fitz.open()
 
-        for pdf_file in files:
-            if Path(pdf_file.name).suffix.lower() != ".pdf":
+        for pdf_path, orig_name, is_temp in input_items:
+            if pdf_path.suffix.lower() != ".pdf":
                 continue
 
-            temp_path = Path(settings.MEDIA_ROOT) / f"temp_{uuid4().hex[:6]}.pdf"
-            _save_uploaded_file(pdf_file, temp_path)
-            temp_pdfs.append(temp_path)
-
-            doc = fitz.open(temp_path)
+            doc = fitz.open(pdf_path)
             merged_doc.insert_pdf(doc)
             doc.close()
 
@@ -633,16 +744,18 @@ def merge_pdf(request):
         merged_doc.close()
 
     except Exception as exc:
-        _cleanup_files(merged_pdf_path, *temp_pdfs)
+        _cleanup_files(merged_pdf_path)
         return Response(
             {"error": f"Merge PDF failed: {exc}"},
             status=500,
         )
     finally:
-        _cleanup_files(*temp_pdfs)
+        for pdf_path, orig_name, is_temp in input_items:
+            if is_temp:
+                _cleanup_files(pdf_path)
 
     return Response({
-        "message": f"Successfully merged {len(temp_pdfs)} PDF files into one document",
+        "message": f"Successfully merged {len(input_items)} PDF files into one document",
         "file": settings.MEDIA_URL + merged_pdf_path.name
     })
 
@@ -650,21 +763,23 @@ def merge_pdf(request):
 # ---------------- 8. COMPRESS PDF ----------------
 @api_view(['POST'])
 def compress_pdf(request):
-    pdf_file = request.FILES.get("file")
-    mode = request.data.get("mode", "extreme")
+    pdf_path, original_name, is_temp = _get_single_input_path(request, 'file')
+    mode = request.data.get("mode") or request.POST.get("mode", "extreme")
 
-    if not pdf_file:
+    if not pdf_path or not pdf_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(pdf_file.name).suffix.lower() != ".pdf":
+    if pdf_path.suffix.lower() != ".pdf":
+        if is_temp: _cleanup_files(pdf_path)
         return Response({"error": "Please upload a PDF file"}, status=400)
 
-    stem = Path(pdf_file.name).stem or "file"
+    stem = Path(original_name).stem or "file"
     out_name = f"{stem}-compressed-{uuid4().hex[:8]}.pdf"
     compressed_path = Path(settings.MEDIA_ROOT) / out_name
 
     try:
-        file_bytes = pdf_file.read()
+        with open(pdf_path, "rb") as f:
+            file_bytes = f.read()
         original_size = len(file_bytes)
 
         if original_size == 0:
@@ -721,6 +836,9 @@ def compress_pdf(request):
             {"error": f"PDF compression failed: {str(exc)}"},
             status=400,
         )
+    finally:
+        if is_temp:
+            _cleanup_files(pdf_path)
 
     return Response({
         "message": f"PDF compressed! Reduced by {savings_percent}%" if savings_percent > 0 else "PDF file is already fully optimized!",
@@ -734,22 +852,24 @@ def compress_pdf(request):
 # ---------------- 9. COMPRESS IMAGE ----------------
 @api_view(['POST'])
 def compress_image(request):
-    img_file = request.FILES.get("file")
-    mode = request.data.get("mode", "extreme")
+    img_path, original_name, is_temp = _get_single_input_path(request, 'file')
+    mode = request.data.get("mode") or request.POST.get("mode", "extreme")
 
-    if not img_file:
+    if not img_path or not img_path.exists():
         return Response({"error": "No image file uploaded"}, status=400)
 
-    suffix = Path(img_file.name).suffix.lower()
+    suffix = img_path.suffix.lower()
     if suffix not in [".jpg", ".jpeg", ".png", ".webp", ".bmp"]:
+        if is_temp: _cleanup_files(img_path)
         return Response({"error": "Please upload a valid image file (JPG, PNG, WEBP, BMP)"}, status=400)
 
-    stem = Path(img_file.name).stem or "image"
+    stem = Path(original_name).stem or "image"
     out_name = f"{stem}-compressed-{uuid4().hex[:8]}{'.jpg' if mode == 'extreme' else suffix}"
     compressed_path = Path(settings.MEDIA_ROOT) / out_name
 
     try:
-        raw_bytes = img_file.read()
+        with open(img_path, "rb") as f:
+            raw_bytes = f.read()
         original_size = len(raw_bytes)
 
         img = Image.open(io.BytesIO(raw_bytes))
@@ -792,6 +912,9 @@ def compress_image(request):
             {"error": f"Image compression failed: {str(exc)}"},
             status=400,
         )
+    finally:
+        if is_temp:
+            _cleanup_files(img_path)
 
     return Response({
         "message": f"Image compressed! Reduced by {savings_percent}%" if savings_percent > 0 else "Image is already fully optimized!",
@@ -805,19 +928,19 @@ def compress_image(request):
 # ---------------- 10. COMPRESS WORD ----------------
 @api_view(['POST'])
 def compress_word(request):
-    docx_file = request.FILES.get("file")
-    mode = request.data.get("mode", "extreme")
+    docx_path, original_name, is_temp = _get_single_input_path(request, 'file')
+    mode = request.data.get("mode") or request.POST.get("mode", "extreme")
 
-    if not docx_file:
+    if not docx_path or not docx_path.exists():
         return Response({"error": "No Word file uploaded"}, status=400)
 
-    if Path(docx_file.name).suffix.lower() not in [".docx", ".doc"]:
+    if docx_path.suffix.lower() not in [".docx", ".doc"]:
+        if is_temp: _cleanup_files(docx_path)
         return Response({"error": "Please upload a Word file (.docx or .doc)"}, status=400)
 
-    docx_path, compressed_path = _build_unique_paths(docx_file.name, Path(docx_file.name).suffix.lower())
+    _, compressed_path = _build_unique_paths(original_name, docx_path.suffix.lower())
 
     try:
-        _save_uploaded_file(docx_file, docx_path)
         original_size = docx_path.stat().st_size
 
         _compress_zip_media(docx_path, compressed_path, media_prefix="word/media/", extreme=(mode == "extreme"))
@@ -825,20 +948,22 @@ def compress_word(request):
         compressed_size = compressed_path.stat().st_size
         if compressed_size >= original_size or compressed_size == 0:
             compressed_path.unlink(missing_ok=True)
-            _save_uploaded_file(docx_file, compressed_path)
+            import shutil
+            shutil.copy2(docx_path, compressed_path)
             compressed_size = original_size
             savings_percent = 0.0
         else:
             savings_percent = round((1 - (compressed_size / max(original_size, 1))) * 100, 1)
 
     except Exception as exc:
-        _cleanup_files(docx_path, compressed_path)
+        _cleanup_files(compressed_path)
         return Response(
             {"error": f"Word compression failed: {str(exc)}"},
             status=400,
         )
     finally:
-        _cleanup_files(docx_path)
+        if is_temp:
+            _cleanup_files(docx_path)
 
     return Response({
         "message": f"Word document compressed! Size reduced by {savings_percent}%" if savings_percent > 0 else "Word document is already fully optimized!",
@@ -852,19 +977,19 @@ def compress_word(request):
 # ---------------- 11. COMPRESS POWERPOINT ----------------
 @api_view(['POST'])
 def compress_ppt(request):
-    pptx_file = request.FILES.get("file")
-    mode = request.data.get("mode", "extreme")
+    pptx_path, original_name, is_temp = _get_single_input_path(request, 'file')
+    mode = request.data.get("mode") or request.POST.get("mode", "extreme")
 
-    if not pptx_file:
+    if not pptx_path or not pptx_path.exists():
         return Response({"error": "No PowerPoint file uploaded"}, status=400)
 
-    if Path(pptx_file.name).suffix.lower() not in [".pptx", ".ppt"]:
+    if pptx_path.suffix.lower() not in [".pptx", ".ppt"]:
+        if is_temp: _cleanup_files(pptx_path)
         return Response({"error": "Please upload a PowerPoint file (.pptx or .ppt)"}, status=400)
 
-    pptx_path, compressed_path = _build_unique_paths(pptx_file.name, Path(pptx_file.name).suffix.lower())
+    _, compressed_path = _build_unique_paths(original_name, pptx_path.suffix.lower())
 
     try:
-        _save_uploaded_file(pptx_file, pptx_path)
         original_size = pptx_path.stat().st_size
 
         _compress_zip_media(pptx_path, compressed_path, media_prefix="ppt/media/", extreme=(mode == "extreme"))
@@ -872,20 +997,22 @@ def compress_ppt(request):
         compressed_size = compressed_path.stat().st_size
         if compressed_size >= original_size or compressed_size == 0:
             compressed_path.unlink(missing_ok=True)
-            _save_uploaded_file(pptx_file, compressed_path)
+            import shutil
+            shutil.copy2(pptx_path, compressed_path)
             compressed_size = original_size
             savings_percent = 0.0
         else:
             savings_percent = round((1 - (compressed_size / max(original_size, 1))) * 100, 1)
 
     except Exception as exc:
-        _cleanup_files(pptx_path, compressed_path)
+        _cleanup_files(compressed_path)
         return Response(
             {"error": f"PowerPoint compression failed: {str(exc)}"},
             status=400,
         )
     finally:
-        _cleanup_files(pptx_path)
+        if is_temp:
+            _cleanup_files(pptx_path)
 
     return Response({
         "message": f"PowerPoint compressed! Size reduced by {savings_percent}%" if savings_percent > 0 else "PowerPoint deck is already fully optimized!",
@@ -896,28 +1023,27 @@ def compress_ppt(request):
     })
 
 
-# ---------------- 12. EXCEL → PDF (NEW) ----------------
+# ---------------- 12. EXCEL → PDF ----------------
 @api_view(['POST'])
 def excel_to_pdf(request):
-    excel_file = request.FILES.get("file")
+    excel_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not excel_file:
+    if not excel_path or not excel_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(excel_file.name).suffix.lower() not in [".xlsx", ".xls"]:
+    if excel_path.suffix.lower() not in [".xlsx", ".xls"]:
+        if is_temp: _cleanup_files(excel_path)
         return Response({"error": "Please upload an Excel file (.xlsx)"}, status=400)
 
-    excel_path, pdf_path = _build_unique_paths(excel_file.name, ".pdf")
+    _, pdf_path = _build_unique_paths(original_name, ".pdf")
 
     try:
-        _save_uploaded_file(excel_file, excel_path)
-
         wb = openpyxl.load_workbook(excel_path, data_only=True)
         pdf_doc = fitz.open()
 
         for sheet_name in wb.sheetnames:
             sheet = wb[sheet_name]
-            page = pdf_doc.new_page(width=792, height=612)  # Landscape letter
+            page = pdf_doc.new_page(width=792, height=612)
             
             lines = [f"Sheet: {sheet_name}", "=" * 50]
             for row in sheet.iter_rows(values_only=True):
@@ -933,13 +1059,14 @@ def excel_to_pdf(request):
         pdf_doc.close()
 
     except Exception as exc:
-        _cleanup_files(excel_path, pdf_path)
+        _cleanup_files(pdf_path)
         return Response(
             {"error": f"Excel to PDF conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
-        _cleanup_files(excel_path)
+        if is_temp:
+            _cleanup_files(excel_path)
 
     return Response({
         "message": "Excel spreadsheet converted to PDF document successfully",
@@ -947,25 +1074,24 @@ def excel_to_pdf(request):
     })
 
 
-# ---------------- 13. PDF → EXCEL (NEW) ----------------
+# ---------------- 13. PDF → EXCEL ----------------
 @api_view(['POST'])
 def pdf_to_excel(request):
-    pdf_file = request.FILES.get("file")
+    pdf_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not pdf_file:
+    if not pdf_path or not pdf_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(pdf_file.name).suffix.lower() != ".pdf":
+    if pdf_path.suffix.lower() != ".pdf":
+        if is_temp: _cleanup_files(pdf_path)
         return Response({"error": "Please upload a PDF file"}, status=400)
 
-    pdf_path, excel_path = _build_unique_paths(pdf_file.name, ".xlsx")
+    _, excel_path = _build_unique_paths(original_name, ".xlsx")
 
     try:
-        _save_uploaded_file(pdf_file, pdf_path)
-
         pdf_doc = fitz.open(pdf_path)
         wb = openpyxl.Workbook()
-        wb.remove(wb.active)  # remove default sheet
+        wb.remove(wb.active)
 
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
@@ -989,13 +1115,14 @@ def pdf_to_excel(request):
         wb.close()
 
     except Exception as exc:
-        _cleanup_files(pdf_path, excel_path)
+        _cleanup_files(excel_path)
         return Response(
             {"error": f"PDF to Excel conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
-        _cleanup_files(pdf_path)
+        if is_temp:
+            _cleanup_files(pdf_path)
 
     return Response({
         "message": "PDF content extracted into Excel workbook (.xlsx)",
@@ -1006,18 +1133,16 @@ def pdf_to_excel(request):
 # ---------------- 14. SPLIT PDF ----------------
 @api_view(['POST'])
 def split_pdf(request):
-    pdf_file = request.FILES.get("file")
+    pdf_path, original_name, is_temp = _get_single_input_path(request, 'file')
 
-    if not pdf_file:
+    if not pdf_path or not pdf_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(pdf_file.name).suffix.lower() != ".pdf":
+    if pdf_path.suffix.lower() != ".pdf":
+        if is_temp: _cleanup_files(pdf_path)
         return Response({"error": "Please upload a PDF file"}, status=400)
 
-    pdf_path, _ = _build_unique_paths(pdf_file.name, ".pdf")
-
     try:
-        _save_uploaded_file(pdf_file, pdf_path)
         pdf_doc = fitz.open(pdf_path)
         total_pages = pdf_doc.page_count
 
@@ -1051,7 +1176,8 @@ def split_pdf(request):
             status=500,
         )
     finally:
-        _cleanup_files(pdf_path)
+        if is_temp:
+            _cleanup_files(pdf_path)
 
     return Response({
         "message": f"Successfully split {total_pages} PDF pages into ZIP archive",
@@ -1059,26 +1185,26 @@ def split_pdf(request):
     })
 
 
-# ---------------- 15. ROTATE PDF (NEW) ----------------
+# ---------------- 15. ROTATE PDF ----------------
 @api_view(['POST'])
 def rotate_pdf(request):
-    pdf_file = request.FILES.get("file")
-    raw_angle = request.data.get("angle", 90)
+    pdf_path, original_name, is_temp = _get_single_input_path(request, 'file')
+    raw_angle = request.data.get("angle") or request.POST.get("angle", 90)
     try:
         angle = int(raw_angle)
     except (ValueError, TypeError):
         angle = 90
 
-    if not pdf_file:
+    if not pdf_path or not pdf_path.exists():
         return Response({"error": "No file uploaded"}, status=400)
 
-    if Path(pdf_file.name).suffix.lower() != ".pdf":
+    if pdf_path.suffix.lower() != ".pdf":
+        if is_temp: _cleanup_files(pdf_path)
         return Response({"error": "Please upload a PDF file"}, status=400)
 
-    pdf_path, rotated_path = _build_unique_paths(pdf_file.name, ".pdf")
+    _, rotated_path = _build_unique_paths(original_name, ".pdf")
 
     try:
-        _save_uploaded_file(pdf_file, pdf_path)
         pdf_doc = fitz.open(pdf_path)
 
         for page in pdf_doc:
@@ -1088,13 +1214,14 @@ def rotate_pdf(request):
         pdf_doc.close()
 
     except Exception as exc:
-        _cleanup_files(pdf_path, rotated_path)
+        _cleanup_files(rotated_path)
         return Response(
             {"error": f"PDF rotation failed: {str(exc)}"},
             status=500,
         )
     finally:
-        _cleanup_files(pdf_path)
+        if is_temp:
+            _cleanup_files(pdf_path)
 
     return Response({
         "message": f"PDF pages rotated by {angle}° successfully",
