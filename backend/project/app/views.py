@@ -269,11 +269,11 @@ def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=
         shutil.copy2(input_path, output_path)
         return
 
-    quality = 28 if extreme else 52
-    max_dim = 850 if extreme else 1400
+    quality = 30 if extreme else 55
+    max_dim = 900 if extreme else 1450
 
     with zipfile.ZipFile(input_path, 'r') as in_zip:
-        with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as out_zip:
+        with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=5) as out_zip:
             for item in in_zip.infolist():
                 data = in_zip.read(item.filename)
                 
@@ -282,7 +282,7 @@ def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=
                         img = Image.open(io.BytesIO(data))
                         img_format = img.format or ("JPEG" if Path(item.filename).suffix.lower() in ['.jpg', '.jpeg'] else "PNG")
                         
-                        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                        img.thumbnail((max_dim, max_dim), Image.Resampling.BILINEAR)
 
                         out_buffer = io.BytesIO()
                         
@@ -291,15 +291,15 @@ def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=
                             img_format = "JPEG"
                             
                         if img_format.upper() in ["JPEG", "JPG"]:
-                            img.save(out_buffer, format="JPEG", quality=quality, optimize=True, progressive=True)
+                            img.save(out_buffer, format="JPEG", quality=quality)
                         elif img_format.upper() == "PNG":
                             if extreme or img.mode != "RGB":
                                 img = img.convert("RGB")
-                                img.save(out_buffer, format="JPEG", quality=quality, optimize=True)
+                                img.save(out_buffer, format="JPEG", quality=quality)
                             else:
-                                img.save(out_buffer, format="PNG", optimize=True)
+                                img.save(out_buffer, format="PNG", compress_level=4)
                         else:
-                            img.save(out_buffer, format=img_format, optimize=True)
+                            img.save(out_buffer, format=img_format)
                             
                         compressed_data = out_buffer.getvalue()
                         if len(compressed_data) < len(data):
@@ -688,7 +688,7 @@ def compress_pdf(request):
             img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
             
             img_buffer = io.BytesIO()
-            img.save(img_buffer, format="JPEG", quality=quality_val, optimize=True, progressive=True)
+            img.save(img_buffer, format="JPEG", quality=quality_val)
             img.close()
             return (page.rect.width, page.rect.height, img_buffer.getvalue())
 
@@ -755,10 +755,10 @@ def compress_image(request):
         img = Image.open(io.BytesIO(raw_bytes))
         is_extreme = mode == "extreme"
 
-        quality = 24 if is_extreme else 48
+        quality = 28 if is_extreme else 50
         max_dim = 1000 if is_extreme else 1600
 
-        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+        img.thumbnail((max_dim, max_dim), Image.Resampling.BILINEAR)
 
         if img.mode in ("RGBA", "P") or is_extreme:
             img = img.convert("RGB")
@@ -766,11 +766,11 @@ def compress_image(request):
         out_buffer = io.BytesIO()
 
         if is_extreme or suffix in [".jpg", ".jpeg", ".bmp"]:
-            img.save(out_buffer, format="JPEG", quality=quality, optimize=True, progressive=True)
+            img.save(out_buffer, format="JPEG", quality=quality)
         elif suffix == ".webp":
-            img.save(out_buffer, format="WEBP", quality=quality, method=6)
+            img.save(out_buffer, format="WEBP", quality=quality, method=4)
         else:
-            img.save(out_buffer, format="PNG", optimize=True)
+            img.save(out_buffer, format="PNG", compress_level=4)
 
         img.close()
         compressed_bytes = out_buffer.getvalue()

@@ -84,12 +84,12 @@ const PdfToExcel = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Extracting tabular data & text blocks...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Formatting Excel workbook (.xlsx)...");
-    }, 1500);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

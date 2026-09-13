@@ -87,12 +87,12 @@ const ExcelToPdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Parsing worksheets & table structure...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Generating high-resolution PDF pages...");
-    }, 1500);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

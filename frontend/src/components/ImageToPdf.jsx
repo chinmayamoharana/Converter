@@ -90,12 +90,12 @@ const ImageToPdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(65);
       setProgressStatus("Optimizing color spaces & margins...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Compiling images into PDF document...");
-    }, 1500);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

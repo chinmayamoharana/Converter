@@ -82,12 +82,12 @@ const PdfToWord = () => {
     const timer1 = setTimeout(() => {
       setProgress(50);
       setProgressStatus("Analyzing pages, tables & typography...");
-    }, 600);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(85);
       setProgressStatus("Formatting output Word (.docx) document...");
-    }, 1400);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

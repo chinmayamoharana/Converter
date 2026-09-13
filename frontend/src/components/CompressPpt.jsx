@@ -85,12 +85,12 @@ const CompressPpt = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Optimizing slide graphics & media...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Repackaging compressed PPTX presentation...");
-    }, 1400);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

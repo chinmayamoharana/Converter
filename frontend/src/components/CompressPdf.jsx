@@ -85,12 +85,12 @@ const CompressPdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(55);
       setProgressStatus("Optimizing streams & graphics...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(85);
       setProgressStatus("Saving compressed PDF...");
-    }, 1400);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

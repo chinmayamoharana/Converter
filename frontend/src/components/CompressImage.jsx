@@ -85,12 +85,12 @@ const CompressImage = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Optimizing image quantization & resolution...");
-    }, 600);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Saving compressed image...");
-    }, 1200);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

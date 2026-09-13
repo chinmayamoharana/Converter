@@ -87,12 +87,12 @@ const WordToPdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Converting typography, tables & images...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Building final PDF document...");
-    }, 1500);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

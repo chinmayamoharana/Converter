@@ -89,12 +89,12 @@ const MergePdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Merging document pages in sequence...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Saving consolidated PDF...");
-    }, 1500);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

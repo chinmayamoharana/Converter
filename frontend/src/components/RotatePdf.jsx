@@ -85,12 +85,12 @@ const RotatePdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(70);
       setProgressStatus(`Rotating pages by ${angle}°...`);
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(95);
       setProgressStatus("Rebuilding PDF document...");
-    }, 1400);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

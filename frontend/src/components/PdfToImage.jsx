@@ -83,12 +83,12 @@ const PdfToImage = () => {
     const timer1 = setTimeout(() => {
       setProgress(55);
       setProgressStatus("Rendering high-res page images...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(85);
       setProgressStatus("Packaging image output...");
-    }, 1400);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

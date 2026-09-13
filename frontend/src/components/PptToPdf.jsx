@@ -85,12 +85,12 @@ const PptToPdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Processing slides and vector graphics...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Generating output PDF document...");
-    }, 1500);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);

@@ -85,12 +85,12 @@ const SplitPdf = () => {
     const timer1 = setTimeout(() => {
       setProgress(60);
       setProgressStatus("Splitting PDF pages into single documents...");
-    }, 700);
+    }, 100);
 
     const timer2 = setTimeout(() => {
       setProgress(90);
       setProgressStatus("Packaging output pages into ZIP file...");
-    }, 1500);
+    }, 250);
 
     return () => {
       clearTimeout(timer1);
