@@ -1,59 +1,89 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
   <defs>
+    <!-- Background Gradient -->
     <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#0F172A" />
       <stop offset="100%" stop-color="#020617" />
     </linearGradient>
+
+    <!-- Main Gradient (Indigo -> Violet -> Pink) -->
     <linearGradient id="primary-grad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#6366F1" />
       <stop offset="50%" stop-color="#8B5CF6" />
       <stop offset="100%" stop-color="#EC4899" />
     </linearGradient>
+
+    <!-- Accent Gradient (Cyan -> Indigo) -->
     <linearGradient id="cyan-grad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#38BDF8" />
       <stop offset="100%" stop-color="#6366F1" />
     </linearGradient>
+
+    <!-- Glowing Accent -->
+    <linearGradient id="glow-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F43F5E" />
+      <stop offset="100%" stop-color="#A855F7" />
+    </linearGradient>
+
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#6366F1" flood-opacity="0.35"/>
     </filter>
+    
     <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
       <feGaussianBlur stdDeviation="8" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
   </defs>
 
+  <!-- Background Squircle Container -->
   <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bg-grad)" stroke="url(#primary-grad)" stroke-width="8" filter="url(#shadow)"/>
+  
+  <!-- Subtle Internal Grid Glow -->
   <rect x="40" y="40" width="432" height="432" rx="92" fill="url(#primary-grad)" opacity="0.05"/>
 
+  <!-- Left Document (Input Page) -->
   <g transform="translate(100, 115)">
+    <!-- Document Card -->
     <rect x="0" y="0" width="170" height="230" rx="20" fill="url(#cyan-grad)" opacity="0.9"/>
+    <!-- Folded Corner -->
     <path d="M 115 0 L 170 55 L 135 55 C 124 55 115 46 115 35 Z" fill="#0F172A" opacity="0.4"/>
+    <!-- Lines on Doc -->
     <rect x="30" y="80" width="110" height="14" rx="7" fill="#FFFFFF" opacity="0.9"/>
     <rect x="30" y="112" width="85" height="12" rx="6" fill="#FFFFFF" opacity="0.7"/>
     <rect x="30" y="140" width="95" height="12" rx="6" fill="#FFFFFF" opacity="0.7"/>
     <rect x="30" y="168" width="60" height="12" rx="6" fill="#FFFFFF" opacity="0.7"/>
   </g>
 
+  <!-- Right Document (Output Page - Elevated & Glowing) -->
   <g transform="translate(242, 165)" filter="url(#shadow)">
+    <!-- Document Card -->
     <rect x="0" y="0" width="170" height="230" rx="20" fill="url(#primary-grad)"/>
+    <!-- Folded Corner -->
     <path d="M 115 0 L 170 55 L 135 55 C 124 55 115 46 115 35 Z" fill="#0F172A" opacity="0.4"/>
+    <!-- Lines on Doc -->
     <rect x="30" y="80" width="110" height="14" rx="7" fill="#FFFFFF" opacity="0.95"/>
     <rect x="30" y="112" width="90" height="12" rx="6" fill="#FFFFFF" opacity="0.8"/>
     <rect x="30" y="140" width="100" height="12" rx="6" fill="#FFFFFF" opacity="0.8"/>
     <rect x="30" y="168" width="70" height="12" rx="6" fill="#FFFFFF" opacity="0.8"/>
   </g>
 
+  <!-- Dynamic Conversion Loop Arrow overlaying center -->
   <g opacity="0.95" filter="url(#glow)">
+    <!-- Swirling Conversion Arrow Forward -->
     <path d="M 190 170 C 260 110, 360 140, 380 200" fill="none" stroke="#38BDF8" stroke-width="16" stroke-linecap="round"/>
     <polygon points="395,205 370,212 375,185" fill="#38BDF8"/>
+
+    <!-- Swirling Conversion Arrow Return -->
     <path d="M 322 342 C 252 402, 152 372, 132 312" fill="none" stroke="#EC4899" stroke-width="16" stroke-linecap="round"/>
     <polygon points="117,307 142,300 137,327" fill="#EC4899"/>
   </g>
 
+  <!-- Central Sparkle / Star Emblem -->
   <g transform="translate(256, 256) scale(1.2)" filter="url(#glow)">
     <path d="M 0 -28 C 4 -10, 10 -4, 28 0 C 10 4, 4 10, 0 28 C -4 10, -10 4, -28 0 C -10 -4, -4 -10, 0 -28 Z" fill="#FFFFFF"/>
   </g>
 
+  <!-- Extra Top Right Sparkle -->
   <g transform="translate(400, 100) scale(0.65)" opacity="0.9">
     <path d="M 0 -24 C 3 -8, 8 -3, 24 0 C 8 3, 3 8, 0 24 C -3 8, -8 3, -24 0 C -8 -3, -3 -8, 0 -24 Z" fill="#38BDF8"/>
   </g>

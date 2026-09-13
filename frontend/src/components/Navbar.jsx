@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
+import Logo from "./Logo";
 import {
   Sparkles,
   ShieldCheck,
@@ -36,20 +37,8 @@ const Navbar = () => {
         <div className="flex items-center justify-between h-16 sm:h-18">
           
           {/* Logo Brand */}
-          <Link to="/" className="flex items-center gap-2.5 sm:gap-3 group shrink-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-violet-600 to-pink-500 p-0.5 shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all duration-300">
-              <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400 group-hover:scale-110 transition-transform duration-300" />
-              </div>
-            </div>
-            <div>
-              <span className="text-lg sm:text-xl font-extrabold font-heading text-white tracking-tight flex items-center gap-1">
-                Omni<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-violet-400 to-pink-400">Convert</span>
-              </span>
-              <span className="hidden sm:block text-[10px] font-medium text-slate-400 tracking-wider uppercase -mt-0.5">
-                Document Studio
-              </span>
-            </div>
+          <Link to="/" className="shrink-0">
+            <Logo size="md" />
           </Link>
 
           {/* Header Center / Right Actions */}

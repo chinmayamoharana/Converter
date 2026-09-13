@@ -15,6 +15,7 @@ from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.shared import Pt
 from pdf2docx import Converter
+from pptx import Presentation
 from concurrent.futures import ThreadPoolExecutor
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -24,9 +25,16 @@ os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
 
 
 
+_last_purge_time = 0
+
+
 def _purge_old_media_files(max_age_hours=1):
+    global _last_purge_time
+    now = time.time()
+    if now - _last_purge_time < 900:  # Purge max once every 15 mins
+        return
+    _last_purge_time = now
     try:
-        now = time.time()
         cutoff = now - (max_age_hours * 3600)
         media_path = Path(settings.MEDIA_ROOT)
         for item in media_path.iterdir():
@@ -39,6 +47,7 @@ def _purge_old_media_files(max_age_hours=1):
         pass
 
 
+
 def _build_unique_paths(upload_name, output_extension):
     _purge_old_media_files()
     original_name = Path(upload_name).name
@@ -46,8 +55,8 @@ def _build_unique_paths(upload_name, output_extension):
     suffix = Path(original_name).suffix.lower()
     unique_id = uuid4().hex[:8]
 
-    input_name = f"{stem}-{unique_id}{suffix}"
-    output_name = f"{stem}-{unique_id}{output_extension}"
+    input_name = f"{stem}-{unique_id}-in{suffix}"
+    output_name = f"{stem}-{unique_id}-out{output_extension}"
 
     return (
         Path(settings.MEDIA_ROOT) / input_name,
@@ -56,6 +65,11 @@ def _build_unique_paths(upload_name, output_extension):
 
 
 def _save_uploaded_file(uploaded_file, destination):
+    if hasattr(uploaded_file, 'seek'):
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
     with open(destination, "wb+") as target:
         for chunk in uploaded_file.chunks():
             target.write(chunk)
@@ -122,31 +136,36 @@ def _build_image_based_docx(pdf_path, docx_path):
 
 
 def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=True):
-    quality = 38 if extreme else 68
-    max_dim = 1000 if extreme else 1800
+    if not zipfile.is_zipfile(input_path):
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return
+
+    quality = 28 if extreme else 52
+    max_dim = 850 if extreme else 1400
 
     with zipfile.ZipFile(input_path, 'r') as in_zip:
         with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as out_zip:
             for item in in_zip.infolist():
                 data = in_zip.read(item.filename)
                 
-                if media_prefix in item.filename.lower() and Path(item.filename).suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
+                if Path(item.filename).suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
                     try:
                         img = Image.open(io.BytesIO(data))
                         img_format = img.format or ("JPEG" if Path(item.filename).suffix.lower() in ['.jpg', '.jpeg'] else "PNG")
                         
-                        if extreme:
-                            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
                         out_buffer = io.BytesIO()
                         
-                        if img.mode in ("RGBA", "P") and img_format.upper() in ["JPEG", "JPG"]:
+                        if img.mode in ("RGBA", "P") or extreme:
                             img = img.convert("RGB")
+                            img_format = "JPEG"
                             
                         if img_format.upper() in ["JPEG", "JPG"]:
                             img.save(out_buffer, format="JPEG", quality=quality, optimize=True, progressive=True)
                         elif img_format.upper() == "PNG":
-                            if extreme and img.mode != "RGB":
+                            if extreme or img.mode != "RGB":
                                 img = img.convert("RGB")
                                 img.save(out_buffer, format="JPEG", quality=quality, optimize=True)
                             else:
@@ -162,6 +181,8 @@ def _compress_zip_media(input_path, output_path, media_prefix="media/", extreme=
                         pass
                         
                 out_zip.writestr(item, data)
+
+
 
 
 # ---------------- HEALTH CHECK ----------------
@@ -272,15 +293,19 @@ def pdf_to_ppt(request):
             prs.slide_width = Inches(first_page.rect.width / 72.0)
             prs.slide_height = Inches(first_page.rect.height / 72.0)
 
-        for idx, page in enumerate(pdf_doc):
+        def render_page(idx):
+            page = pdf_doc[idx]
             pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            img_path = Path(settings.MEDIA_ROOT) / f"{pdf_path.stem}-ppt-page-{idx+1}.png"
-            pixmap.save(str(img_path))
-            temp_images.append(img_path)
+            return idx, pixmap.tobytes("png")
 
+        max_workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            rendered_pages = list(executor.map(render_page, range(pdf_doc.page_count)))
+
+        for idx, img_bytes in rendered_pages:
             slide = prs.slides.add_slide(blank_slide_layout)
             slide.shapes.add_picture(
-                str(img_path),
+                io.BytesIO(img_bytes),
                 left=0,
                 top=0,
                 width=prs.slide_width,
@@ -290,7 +315,7 @@ def pdf_to_ppt(request):
         pdf_doc.close()
         prs.save(str(pptx_path))
     except Exception as exc:
-        _cleanup_files(pdf_path, pptx_path, *temp_images)
+        _cleanup_files(pdf_path, pptx_path)
         return Response(
             {"error": f"PDF to PPT conversion failed: {exc}"},
             status=500,
@@ -429,17 +454,17 @@ def pdf_to_image(request):
         return Response({"error": "Please upload a PDF file"}, status=400)
 
     pdf_path, _ = _build_unique_paths(pdf_file.name, ".pdf")
-    temp_images = []
 
     try:
         _save_uploaded_file(pdf_file, pdf_path)
         pdf_doc = fitz.open(pdf_path)
+        total_pages = pdf_doc.page_count
 
-        if pdf_doc.page_count == 0:
+        if total_pages == 0:
             pdf_doc.close()
             raise ValueError("The uploaded PDF has no pages.")
 
-        if pdf_doc.page_count == 1:
+        if total_pages == 1:
             png_name = f"{pdf_path.stem}-page1.png"
             png_path = Path(settings.MEDIA_ROOT) / png_name
             pixmap = pdf_doc[0].get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
@@ -454,31 +479,33 @@ def pdf_to_image(request):
             zip_name = f"{pdf_path.stem}-images.zip"
             zip_path = Path(settings.MEDIA_ROOT) / zip_name
 
-            with zipfile.ZipFile(zip_path, 'w') as zipf:
-                for idx, page in enumerate(pdf_doc):
-                    pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-                    img_name = f"page-{idx+1}.png"
-                    img_path = Path(settings.MEDIA_ROOT) / img_name
-                    pixmap.save(str(img_path))
-                    temp_images.append(img_path)
+            def render_page(idx):
+                page = pdf_doc[idx]
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                return idx, pixmap.tobytes("png")
 
-                    zipf.write(img_path, arcname=img_name)
+            max_workers = min(os.cpu_count() or 4, 8)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                rendered_pages = list(executor.map(render_page, range(total_pages)))
+
+            with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_STORED) as zipf:
+                for idx, img_bytes in rendered_pages:
+                    zipf.writestr(f"page-{idx+1}.png", img_bytes)
 
             pdf_doc.close()
 
             return Response({
-                "message": f"Exported {pdf_doc.page_count} PDF pages into PNG Zip package",
+                "message": f"Exported {total_pages} PDF pages into PNG Zip package",
                 "file": settings.MEDIA_URL + zip_name
             })
 
     except Exception as exc:
-        _cleanup_files(pdf_path, *temp_images)
         return Response(
             {"error": f"PDF to Image conversion failed: {exc}"},
             status=500,
         )
     finally:
-        _cleanup_files(*temp_images)
+        _cleanup_files(pdf_path)
 
 
 # ---------------- 7. MERGE PDF ----------------
@@ -561,44 +588,31 @@ def compress_pdf(request):
             return Response({"error": "PDF document contains no pages."}, status=400)
 
         is_extreme = mode == "extreme"
+        dpi_val = 90 if is_extreme else 115
+        quality_val = 26 if is_extreme else 48
 
-        if is_extreme:
-            new_doc = fitz.open()
+        new_doc = fitz.open()
 
-            def process_page(page_num):
-                page = pdf_doc[page_num]
-                pixmap = page.get_pixmap(dpi=110, alpha=False)
-                img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
-                
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format="JPEG", quality=38, optimize=True, progressive=True)
-                img.close()
-                return (page.rect.width, page.rect.height, img_buffer.getvalue())
+        def process_page(page_num):
+            page = pdf_doc[page_num]
+            pixmap = page.get_pixmap(dpi=dpi_val, alpha=False)
+            img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
+            
+            img_buffer = io.BytesIO()
+            img.save(img_buffer, format="JPEG", quality=quality_val, optimize=True, progressive=True)
+            img.close()
+            return (page.rect.width, page.rect.height, img_buffer.getvalue())
 
-            max_workers = min(os.cpu_count() or 4, 8)
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                results = list(executor.map(process_page, range(pdf_doc.page_count)))
+        max_workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(process_page, range(pdf_doc.page_count)))
 
-            for w, h, img_bytes in results:
-                new_page = new_doc.new_page(width=w, height=h)
-                new_page.insert_image(new_page.rect, stream=img_bytes)
+        for w, h, img_bytes in results:
+            new_page = new_doc.new_page(width=w, height=h)
+            new_page.insert_image(new_page.rect, stream=img_bytes)
 
-            compressed_bytes = new_doc.tobytes(garbage=4, deflate=True)
-            new_doc.close()
-        else:
-            try:
-                compressed_bytes = pdf_doc.tobytes(
-                    garbage=4,
-                    deflate=True,
-                    deflate_images=True,
-                    deflate_fonts=True,
-                )
-            except Exception:
-                new_doc = fitz.open()
-                new_doc.insert_pdf(pdf_doc)
-                compressed_bytes = new_doc.tobytes(garbage=4, deflate=True)
-                new_doc.close()
-
+        compressed_bytes = new_doc.tobytes(garbage=4, deflate=True)
+        new_doc.close()
         pdf_doc.close()
 
         compressed_size = len(compressed_bytes)
@@ -620,7 +634,7 @@ def compress_pdf(request):
         )
 
     return Response({
-        "message": f"PDF compressed successfully! Size reduced by {savings_percent}%" if savings_percent > 0 else "PDF file is already fully optimized!",
+        "message": f"PDF compressed! Reduced by {savings_percent}%" if savings_percent > 0 else "PDF file is already fully optimized!",
         "file": settings.MEDIA_URL + compressed_path.name,
         "original_size": original_size,
         "compressed_size": compressed_size,
@@ -652,11 +666,10 @@ def compress_image(request):
         img = Image.open(io.BytesIO(raw_bytes))
         is_extreme = mode == "extreme"
 
-        quality = 35 if is_extreme else 68
-        max_dim = 1200 if is_extreme else 2000
+        quality = 24 if is_extreme else 48
+        max_dim = 1000 if is_extreme else 1600
 
-        if is_extreme:
-            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
         if img.mode in ("RGBA", "P") or is_extreme:
             img = img.convert("RGB")
@@ -692,7 +705,7 @@ def compress_image(request):
         )
 
     return Response({
-        "message": f"Image compressed! Size reduced by {savings_percent}%" if savings_percent > 0 else "Image is already fully optimized!",
+        "message": f"Image compressed! Reduced by {savings_percent}%" if savings_percent > 0 else "Image is already fully optimized!",
         "file": settings.MEDIA_URL + compressed_path.name,
         "original_size": original_size,
         "compressed_size": compressed_size,
@@ -709,10 +722,10 @@ def compress_word(request):
     if not docx_file:
         return Response({"error": "No Word file uploaded"}, status=400)
 
-    if Path(docx_file.name).suffix.lower() not in [".docx"]:
-        return Response({"error": "Please upload a DOCX file"}, status=400)
+    if Path(docx_file.name).suffix.lower() not in [".docx", ".doc"]:
+        return Response({"error": "Please upload a Word file (.docx or .doc)"}, status=400)
 
-    docx_path, compressed_path = _build_unique_paths(docx_file.name, ".docx")
+    docx_path, compressed_path = _build_unique_paths(docx_file.name, Path(docx_file.name).suffix.lower())
 
     try:
         _save_uploaded_file(docx_file, docx_path)
@@ -721,7 +734,7 @@ def compress_word(request):
         _compress_zip_media(docx_path, compressed_path, media_prefix="word/media/", extreme=(mode == "extreme"))
 
         compressed_size = compressed_path.stat().st_size
-        if compressed_size >= original_size:
+        if compressed_size >= original_size or compressed_size == 0:
             compressed_path.unlink(missing_ok=True)
             _save_uploaded_file(docx_file, compressed_path)
             compressed_size = original_size
@@ -756,10 +769,10 @@ def compress_ppt(request):
     if not pptx_file:
         return Response({"error": "No PowerPoint file uploaded"}, status=400)
 
-    if Path(pptx_file.name).suffix.lower() not in [".pptx"]:
-        return Response({"error": "Please upload a PPTX file"}, status=400)
+    if Path(pptx_file.name).suffix.lower() not in [".pptx", ".ppt"]:
+        return Response({"error": "Please upload a PowerPoint file (.pptx or .ppt)"}, status=400)
 
-    pptx_path, compressed_path = _build_unique_paths(pptx_file.name, ".pptx")
+    pptx_path, compressed_path = _build_unique_paths(pptx_file.name, Path(pptx_file.name).suffix.lower())
 
     try:
         _save_uploaded_file(pptx_file, pptx_path)
@@ -768,7 +781,7 @@ def compress_ppt(request):
         _compress_zip_media(pptx_path, compressed_path, media_prefix="ppt/media/", extreme=(mode == "extreme"))
 
         compressed_size = compressed_path.stat().st_size
-        if compressed_size >= original_size:
+        if compressed_size >= original_size or compressed_size == 0:
             compressed_path.unlink(missing_ok=True)
             _save_uploaded_file(pptx_file, compressed_path)
             compressed_size = original_size
@@ -901,7 +914,7 @@ def pdf_to_excel(request):
     })
 
 
-# ---------------- 14. SPLIT PDF (NEW) ----------------
+# ---------------- 14. SPLIT PDF ----------------
 @api_view(['POST'])
 def split_pdf(request):
     pdf_file = request.FILES.get("file")
@@ -913,45 +926,46 @@ def split_pdf(request):
         return Response({"error": "Please upload a PDF file"}, status=400)
 
     pdf_path, _ = _build_unique_paths(pdf_file.name, ".pdf")
-    temp_pdfs = []
 
     try:
         _save_uploaded_file(pdf_file, pdf_path)
         pdf_doc = fitz.open(pdf_path)
+        total_pages = pdf_doc.page_count
 
-        if pdf_doc.page_count == 0:
+        if total_pages == 0:
             pdf_doc.close()
             return Response({"error": "PDF has no pages to split."}, status=400)
 
         zip_name = f"{pdf_path.stem}-split.zip"
         zip_path = Path(settings.MEDIA_ROOT) / zip_name
 
-        with zipfile.ZipFile(zip_path, 'w') as zipf:
-            for idx in range(pdf_doc.page_count):
-                single_doc = fitz.open()
-                single_doc.insert_pdf(pdf_doc, from_page=idx, to_page=idx)
-                
-                page_name = f"page-{idx+1}.pdf"
-                page_path = Path(settings.MEDIA_ROOT) / page_name
-                single_doc.save(str(page_path))
-                single_doc.close()
-                temp_pdfs.append(page_path)
+        def split_page(idx):
+            single_doc = fitz.open()
+            single_doc.insert_pdf(pdf_doc, from_page=idx, to_page=idx)
+            data = single_doc.tobytes(garbage=4, deflate=True)
+            single_doc.close()
+            return idx, data
 
-                zipf.write(page_path, arcname=page_name)
+        max_workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            rendered_pdfs = list(executor.map(split_page, range(total_pages)))
+
+        with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zipf:
+            for idx, pdf_bytes in rendered_pdfs:
+                zipf.writestr(f"page-{idx+1}.pdf", pdf_bytes)
 
         pdf_doc.close()
 
     except Exception as exc:
-        _cleanup_files(pdf_path, *temp_pdfs)
         return Response(
             {"error": f"PDF split failed: {str(exc)}"},
             status=500,
         )
     finally:
-        _cleanup_files(pdf_path, *temp_pdfs)
+        _cleanup_files(pdf_path)
 
     return Response({
-        "message": f"Successfully split {len(temp_pdfs)} PDF pages into ZIP archive",
+        "message": f"Successfully split {total_pages} PDF pages into ZIP archive",
         "file": settings.MEDIA_URL + zip_name
     })
 
@@ -960,7 +974,11 @@ def split_pdf(request):
 @api_view(['POST'])
 def rotate_pdf(request):
     pdf_file = request.FILES.get("file")
-    angle = int(request.data.get("angle", 90))
+    raw_angle = request.data.get("angle", 90)
+    try:
+        angle = int(raw_angle)
+    except (ValueError, TypeError):
+        angle = 90
 
     if not pdf_file:
         return Response({"error": "No file uploaded"}, status=400)
@@ -977,7 +995,7 @@ def rotate_pdf(request):
         for page in pdf_doc:
             page.set_rotation((page.rotation + angle) % 360)
 
-        pdf_doc.save(str(rotated_path))
+        pdf_doc.save(str(rotated_path), deflate=True, garbage=3)
         pdf_doc.close()
 
     except Exception as exc:

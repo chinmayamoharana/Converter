@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { Sparkles, ShieldCheck, Heart, Lock } from "lucide-react";
+import Logo from "./Logo";
+import { ShieldCheck, Heart, Lock } from "lucide-react";
 
 const Footer = () => {
   return (
@@ -10,15 +11,8 @@ const Footer = () => {
           
           {/* Brand Column */}
           <div className="sm:col-span-2 space-y-4">
-            <Link to="/" className="flex items-center gap-2.5 group w-fit">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-violet-600 to-pink-500 p-0.5 shadow-lg shadow-indigo-500/20">
-                <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                  <Sparkles className="w-4 h-4 text-indigo-400" />
-                </div>
-              </div>
-              <span className="text-xl font-extrabold font-heading text-white tracking-tight">
-                Omni<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-violet-400 to-pink-400">Convert</span>
-              </span>
+            <Link to="/" className="w-fit block">
+              <Logo size="md" />
             </Link>
             <p className="text-slate-400 text-sm max-w-md leading-relaxed">
               Ultra-fast, secure online document converter and compressor suite. Transform PDFs, Word documents, PowerPoint presentations, Excel spreadsheets, and images in seconds.
