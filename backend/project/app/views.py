@@ -3,6 +3,8 @@ import io
 import time
 import zipfile
 import shutil
+import html
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,6 +25,29 @@ from rest_framework.response import Response
 os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
 
 _last_purge_time = 0
+
+
+RE_SCRIPT_STYLE = re.compile(r"<(script|style|head|svg|math)[^>]*>.*?</\1>", flags=re.DOTALL | re.IGNORECASE)
+RE_COMMENTS = re.compile(r"<!--.*?-->", flags=re.DOTALL)
+RE_BLOCK_TAGS = re.compile(r"<(br|p|div|tr|h[1-6]|li|blockquote|section|header|footer|table|article|hgroup|nav)[^>]*>", flags=re.IGNORECASE)
+RE_ALL_TAGS = re.compile(r"<[^>]+>")
+RE_MULTI_NEWLINES = re.compile(r"\n\s*\n\s*\n+")
+
+
+def _clean_html_to_plain_text(raw_text):
+    if not raw_text or not isinstance(raw_text, str):
+        return ""
+
+    text = html.unescape(raw_text)
+    text = text.replace("\xa0", " ")
+    text = RE_SCRIPT_STYLE.sub("", text)
+    text = RE_COMMENTS.sub("", text)
+    text = RE_BLOCK_TAGS.sub("\n", text)
+    text = RE_ALL_TAGS.sub("", text)
+
+    lines = [line.strip() for line in text.splitlines()]
+    cleaned = "\n".join(lines)
+    return RE_MULTI_NEWLINES.sub("\n\n", cleaned).strip()
 
 
 def _purge_old_media_files(max_age_hours=1):
@@ -1339,3 +1364,262 @@ def rotate_pdf(request):
         "message": f"PDF pages rotated by {angle}° successfully",
         "file": settings.MEDIA_URL + rotated_path.name
     })
+
+
+# ---------------- 16. EXTRACT TEXT FROM IMAGES & ALL FILE TYPES ----------------
+@api_view(['POST'])
+def extract_text(request):
+    input_path, original_name, is_temp = _get_single_input_path(request, 'file')
+
+    if not input_path or not input_path.exists():
+        return Response({"error": "No file uploaded"}, status=400)
+
+    ext = input_path.suffix.lower()
+    _, out_txt_path = _build_unique_paths(original_name, ".txt")
+
+    sections = []
+    extracted_text = ""
+    file_type_label = "Document"
+
+    try:
+        # 1. PDF Documents (Multi-threaded parallel page extraction)
+        if ext == ".pdf":
+            file_type_label = "PDF Document"
+            pdf_doc = fitz.open(input_path)
+            total_pages = pdf_doc.page_count
+
+            def process_pdf_page(idx):
+                page = pdf_doc[idx]
+                txt = page.get_text("text").strip()
+                if not txt:
+                    try:
+                        tp = page.get_textpage_ocr(flags=0, full=True)
+                        txt = tp.extractText().strip()
+                    except Exception:
+                        pass
+                clean_txt = _clean_html_to_plain_text(txt)
+                return {
+                    "title": f"Page {idx + 1}",
+                    "text": clean_txt or "[No readable text on page]"
+                }
+
+            max_workers = min(os.cpu_count() or 4, 8)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                sections = list(executor.map(process_pdf_page, range(total_pages)))
+            pdf_doc.close()
+
+        # 2. Image Files (.png, .jpg, .jpeg, .webp, .bmp, .tiff, .gif, .svg)
+        elif ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".gif", ".svg"]:
+            file_type_label = f"Image ({ext.upper()[1:]})"
+            img_text = ""
+
+            try:
+                import pytesseract
+                img_obj = Image.open(input_path)
+                img_text = pytesseract.image_to_string(img_obj).strip()
+            except Exception:
+                img_text = ""
+
+            if not img_text:
+                try:
+                    img_doc = fitz.open(input_path)
+                    pdf_bytes = img_doc.convert_to_pdf()
+                    pdf_from_img = fitz.open("pdf", pdf_bytes)
+                    page = pdf_from_img[0]
+                    img_text = page.get_text().strip()
+                    if not img_text:
+                        try:
+                            tp = page.get_textpage_ocr(flags=0, full=True)
+                            img_text = tp.extractText().strip()
+                        except Exception:
+                            pass
+                    pdf_from_img.close()
+                    img_doc.close()
+                except Exception:
+                    pass
+
+            meta_info = ""
+            try:
+                with Image.open(input_path) as img:
+                    w, h = img.size
+                    format_str = img.format or ext.upper()[1:]
+                    mode_str = img.mode
+                    meta_info = f"[Image Info: Format={format_str}, Resolution={w}x{h}px, Mode={mode_str}]"
+            except Exception:
+                meta_info = "[Image File]"
+
+            clean_img_txt = _clean_html_to_plain_text(img_text)
+
+            if clean_img_txt:
+                sections.append({
+                    "title": "Extracted Image Text (OCR)",
+                    "text": clean_img_txt
+                })
+            else:
+                sections.append({
+                    "title": "Image File Analysis",
+                    "text": f"{meta_info}\n\nNo plain-text fonts directly embedded. If image contains handwritten or non-standard text, standard optical character recognition was executed."
+                })
+
+        # 3. Word Documents (.docx, .doc)
+        elif ext in [".docx", ".doc"]:
+            file_type_label = "Word Document"
+            try:
+                doc = Document(input_path)
+                p_texts = [p.text for p in doc.paragraphs if p.text.strip()]
+
+                table_texts = []
+                for t_idx, table in enumerate(doc.tables):
+                    t_rows = []
+                    for row in table.rows:
+                        row_vals = [cell.text.strip() for cell in row.cells]
+                        t_rows.append(" | ".join(row_vals))
+                    if t_rows:
+                        table_texts.append(f"--- Table {t_idx + 1} ---\n" + "\n".join(t_rows))
+
+                full_doc_text = "\n\n".join(p_texts)
+                if table_texts:
+                    full_doc_text += "\n\n" + "\n\n".join(table_texts)
+
+                clean_doc_txt = _clean_html_to_plain_text(full_doc_text)
+
+                sections.append({
+                    "title": "Document Content",
+                    "text": clean_doc_txt or "[Empty Word Document]"
+                })
+            except Exception as e:
+                sections.append({
+                    "title": "Document Content",
+                    "text": f"[Error reading Word doc: {str(e)}]"
+                })
+
+        # 4. PowerPoint Decks (.pptx, .ppt)
+        elif ext in [".pptx", ".ppt"]:
+            file_type_label = "PowerPoint Presentation"
+            try:
+                prs = Presentation(input_path)
+                for idx, slide in enumerate(prs.slides):
+                    slide_texts = []
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text") and shape.text.strip():
+                            slide_texts.append(shape.text.strip())
+                    slide_combined = "\n".join(slide_texts)
+                    clean_slide_txt = _clean_html_to_plain_text(slide_combined)
+                    sections.append({
+                        "title": f"Slide {idx + 1}",
+                        "text": clean_slide_txt or "[Empty Slide]"
+                    })
+            except Exception as e:
+                sections.append({
+                    "title": "Presentation Content",
+                    "text": f"[Error reading PPTX: {str(e)}]"
+                })
+
+        # 5. Excel Spreadsheets (.xlsx, .xls, .csv, .tsv)
+        elif ext in [".xlsx", ".xls", ".csv", ".tsv"]:
+            file_type_label = "Excel Spreadsheet"
+            if ext in [".csv", ".tsv"]:
+                import csv
+                delimiter = "\t" if ext == ".tsv" else ","
+                with open(input_path, "r", encoding="utf-8", errors="replace") as f:
+                    reader = csv.reader(f, delimiter=delimiter)
+                    rows = ["\t".join(r) for r in reader if any(r)]
+                clean_csv_txt = _clean_html_to_plain_text("\n".join(rows))
+                sections.append({
+                    "title": "CSV Content",
+                    "text": clean_csv_txt or "[Empty CSV]"
+                })
+            else:
+                wb = openpyxl.load_workbook(input_path, data_only=True)
+                for sheet_name in wb.sheetnames:
+                    ws = wb[sheet_name]
+                    sheet_rows = []
+                    for row in ws.iter_rows(values_only=True):
+                        vals = [str(cell).strip() for cell in row if cell is not None and str(cell).strip() != ""]
+                        if vals:
+                            sheet_rows.append(" | ".join(vals))
+                    clean_sheet_txt = _clean_html_to_plain_text("\n".join(sheet_rows))
+                    sections.append({
+                        "title": f"Sheet: {sheet_name}",
+                        "text": clean_sheet_txt or "[Empty Sheet]"
+                    })
+
+        # 6. HTML / XML Files (.html, .htm, .xhtml, .xml)
+        elif ext in [".html", ".htm", ".xhtml", ".xml"]:
+            file_type_label = f"HTML / XML Document ({ext.upper()[1:]})"
+            content = None
+            for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
+                try:
+                    with open(input_path, "r", encoding=enc) as f:
+                        content = f.read()
+                    break
+                except Exception:
+                    pass
+
+            clean_html_txt = _clean_html_to_plain_text(content or "")
+            sections.append({
+                "title": "Clean Plain Text Content",
+                "text": clean_html_txt or "[No readable text content]"
+            })
+
+        # 7. Text / Code / Other Files (.txt, .md, .json, .py, .js, .css, etc.)
+        else:
+            file_type_label = f"Text / Code File ({ext.upper()[1:] or 'TXT'})"
+            content = None
+            for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
+                try:
+                    with open(input_path, "r", encoding=enc) as f:
+                        content = f.read()
+                    break
+                except Exception:
+                    pass
+
+            if content is None:
+                import re
+                with open(input_path, "rb") as f:
+                    raw_data = f.read()
+                matches = re.findall(b"[\x20-\x7e]{4,}", raw_data)
+                content = "\n".join(m.decode("ascii", errors="ignore") for m in matches)
+                file_type_label = "Binary Data / Extracted Strings"
+
+            clean_txt = _clean_html_to_plain_text(content or "")
+            sections.append({
+                "title": "File Content",
+                "text": clean_txt or "[No readable text content]"
+            })
+
+        section_texts = []
+        for sec in sections:
+            section_texts.append(f"=== {sec['title']} ===\n{sec['text']}")
+        extracted_text = "\n\n".join(section_texts)
+
+        words = extracted_text.split()
+        word_count = len(words)
+        char_count = len(extracted_text)
+        line_count = len(extracted_text.splitlines())
+
+        with open(out_txt_path, "w", encoding="utf-8") as out_f:
+            out_f.write(extracted_text)
+
+    except Exception as exc:
+        _cleanup_files(out_txt_path)
+        return Response(
+            {"error": f"Text extraction failed: {str(exc)}"},
+            status=500,
+        )
+    finally:
+        if is_temp:
+            _cleanup_files(input_path)
+
+    return Response({
+        "message": "Text extracted successfully",
+        "file": settings.MEDIA_URL + out_txt_path.name,
+        "file_name": original_name,
+        "file_type": file_type_label,
+        "word_count": word_count,
+        "char_count": char_count,
+        "line_count": line_count,
+        "sections": sections,
+        "extracted_text": extracted_text,
+    })
+

@@ -11,9 +11,19 @@ import {
   ArrowRight,
   Scissors,
   RotateCw,
+  ScanText,
 } from "lucide-react";
 
 export const toolsList = [
+  {
+    id: "extract-text",
+    path: "/extract-text",
+    title: "Extract Text (OCR)",
+    desc: "Extract text from images, PDFs, Word, Excel, PPT & code files",
+    icon: ScanText,
+    badge: "TXT / OCR",
+    color: "from-indigo-500/20 to-violet-500/20 text-indigo-400 border-indigo-500/30",
+  },
   {
     id: "pdf-to-word",
     path: "/pdf-to-word",

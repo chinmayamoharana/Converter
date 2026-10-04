@@ -23,6 +23,7 @@ const CompressPdf = lazy(() => import("./components/CompressPdf"));
 const CompressImage = lazy(() => import("./components/CompressImage"));
 const CompressWord = lazy(() => import("./components/CompressWord"));
 const CompressPpt = lazy(() => import("./components/CompressPpt"));
+const ExtractText = lazy(() => import("./components/ExtractText"));
 
 const PageLoader = () => (
   <div className="max-w-4xl mx-auto py-16 flex flex-col items-center justify-center space-y-4">
@@ -51,6 +52,7 @@ function App() {
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/" element={<PdfToWord />} />
+              <Route path="/extract-text" element={<ExtractText />} />
               <Route path="/pdf-to-word" element={<PdfToWord />} />
               <Route path="/word-to-pdf" element={<WordToPdf />} />
               <Route path="/pdf-to-ppt" element={<PdfToPpt />} />

@@ -17,6 +17,7 @@ from .views import (
     split_pdf,
     rotate_pdf,
     upload_chunk,
+    extract_text,
 )
 
 urlpatterns = [
@@ -37,5 +38,6 @@ urlpatterns = [
     path('pdf-to-excel/', pdf_to_excel),
     path('split-pdf/', split_pdf),
     path('rotate-pdf/', rotate_pdf),
+    path('extract-text/', extract_text),
 ]
 

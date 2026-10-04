@@ -113,6 +113,7 @@ export const uploadFileInChunks = async (file, onProgress = null) => {
 
 // Universal smart API caller: chunks automatically whenever payload > 3MB
 export const executeApiCall = async (endpoint, fileOrFiles, extraParams = {}, onProgress = null) => {
+  const cleanEndpoint = endpoint ? endpoint.replace(/^\/+/, "") : "";
   const isArray = Array.isArray(fileOrFiles) || fileOrFiles instanceof FileList;
   const filesList = isArray ? Array.from(fileOrFiles).filter(Boolean) : [fileOrFiles].filter(Boolean);
 
@@ -142,9 +143,9 @@ export const executeApiCall = async (endpoint, fileOrFiles, extraParams = {}, on
     }
 
     if (isArray) {
-      return await api.post(endpoint, { file_paths: uploadedPaths, ...extraParams });
+      return await api.post(cleanEndpoint, { file_paths: uploadedPaths, ...extraParams });
     } else {
-      return await api.post(endpoint, { file_path: uploadedPaths[0], ...extraParams });
+      return await api.post(cleanEndpoint, { file_path: uploadedPaths[0], ...extraParams });
     }
   } else {
     // Direct upload for small files under 3MB
@@ -168,6 +169,6 @@ export const executeApiCall = async (endpoint, fileOrFiles, extraParams = {}, on
     }
 
     // DO NOT manually set Content-Type header when passing FormData object in Axios!
-    return await api.post(endpoint, formData);
+    return await api.post(cleanEndpoint, formData);
   }
 };
