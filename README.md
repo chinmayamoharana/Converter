@@ -108,6 +108,8 @@ npm run dev
 | :--- | :---: | :--- | :--- |
 | `/api/pdf-to-word/` | `POST` | `.pdf` | Converts PDF to formatted DOCX document |
 | `/api/word-to-pdf/` | `POST` | `.docx`, `.doc` | Converts Word document to PDF |
+| `/api/word-to-image/` | `POST` | `.docx`, `.doc` | Renders Word document pages to PNG image or Zip |
+| `/api/image-to-word/` | `POST` | Images (`.png`, `.jpg`, `.webp`, `.bmp`, etc.) | Converts images into editable Word DOCX with OCR text |
 | `/api/pdf-to-ppt/` | `POST` | `.pdf` | Converts PDF pages into PPTX slide deck |
 | `/api/ppt-to-pdf/` | `POST` | `.pptx`, `.ppt` | Converts PowerPoint deck to PDF |
 | `/api/pdf-to-excel/` | `POST` | `.pdf` | Extracts PDF tabular data into Excel `.xlsx` |

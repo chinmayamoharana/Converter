@@ -18,6 +18,8 @@ from .views import (
     rotate_pdf,
     upload_chunk,
     extract_text,
+    word_to_image,
+    image_to_word,
 )
 
 urlpatterns = [
@@ -25,6 +27,8 @@ urlpatterns = [
     path('upload-chunk/', upload_chunk),
     path('pdf-to-word/', pdf_to_word),
     path('word-to-pdf/', word_to_pdf),
+    path('word-to-image/', word_to_image),
+    path('image-to-word/', image_to_word),
     path('pdf-to-ppt/', pdf_to_ppt),
     path('ppt-to-pdf/', ppt_to_pdf),
     path('image-to-pdf/', image_to_pdf),

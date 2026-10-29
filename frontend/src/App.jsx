@@ -10,6 +10,8 @@ import Footer from "./components/Footer";
 // Lazy-loaded routes for ultra-fast initial bundle loading
 const PdfToWord = lazy(() => import("./components/PdfToWord"));
 const WordToPdf = lazy(() => import("./components/WordToPdf"));
+const WordToImage = lazy(() => import("./components/WordToImage"));
+const ImageToWord = lazy(() => import("./components/ImageToWord"));
 const PdfToPpt = lazy(() => import("./components/PdfToPpt"));
 const PptToPdf = lazy(() => import("./components/PptToPdf"));
 const ExcelToPdf = lazy(() => import("./components/ExcelToPdf"));
@@ -55,6 +57,8 @@ function App() {
               <Route path="/extract-text" element={<ExtractText />} />
               <Route path="/pdf-to-word" element={<PdfToWord />} />
               <Route path="/word-to-pdf" element={<WordToPdf />} />
+              <Route path="/word-to-image" element={<WordToImage />} />
+              <Route path="/image-to-word" element={<ImageToWord />} />
               <Route path="/pdf-to-ppt" element={<PdfToPpt />} />
               <Route path="/ppt-to-pdf" element={<PptToPdf />} />
               <Route path="/excel-to-pdf" element={<ExcelToPdf />} />

@@ -15,7 +15,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from docx import Document
 from docx.enum.section import WD_SECTION
-from docx.shared import Pt
+from docx.shared import Pt, Inches
 from pptx import Presentation
 from concurrent.futures import ThreadPoolExecutor
 from rest_framework.decorators import api_view
@@ -32,6 +32,22 @@ RE_COMMENTS = re.compile(r"<!--.*?-->", flags=re.DOTALL)
 RE_BLOCK_TAGS = re.compile(r"<(br|p|div|tr|h[1-6]|li|blockquote|section|header|footer|table|article|hgroup|nav)[^>]*>", flags=re.IGNORECASE)
 RE_ALL_TAGS = re.compile(r"<[^>]+>")
 RE_MULTI_NEWLINES = re.compile(r"\n\s*\n\s*\n+")
+
+IMAGE_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif",
+    ".gif", ".svg", ".ico", ".jfif", ".avif", ".pjpeg", ".pjp",
+    ".ppm", ".pgm", ".pbm", ".pnm", ".heic", ".heif", ".cur",
+    ".eps", ".icns"
+}
+
+
+def _is_image_file(file_path):
+    try:
+        with Image.open(file_path) as im:
+            im.verify()
+        return True
+    except Exception:
+        return False
 
 
 def _clean_html_to_plain_text(raw_text):
@@ -271,118 +287,182 @@ def _pdf_to_docx_pure_python(pdf_path, docx_path):
         pdf_doc.close()
 
 
+def _get_docx_page_count_info(docx_path):
+    """
+    Inspects OpenXML metadata and document markup to determine the author's intended page count.
+    Returns (expected_pages: int, has_explicit_breaks: bool)
+    """
+    expected_pages = 1
+    has_breaks = False
+    try:
+        if zipfile.is_zipfile(docx_path):
+            with zipfile.ZipFile(docx_path, 'r') as z:
+                # 1. Read app.xml page count
+                if 'docProps/app.xml' in z.namelist():
+                    app_xml = z.read('docProps/app.xml').decode('utf-8', errors='ignore')
+                    m = re.search(r'<Pages>(\d+)</Pages>', app_xml)
+                    if m:
+                        expected_pages = int(m.group(1))
+
+                # 2. Inspect document.xml for explicit page breaks
+                if 'word/document.xml' in z.namelist():
+                    doc_xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
+                    break_count = len(re.findall(r'<w:br[^>]+w:type=["\']page["\']', doc_xml)) + \
+                                  len(re.findall(r'<w:lastRenderedPageBreak', doc_xml))
+                    if break_count > 0:
+                        has_breaks = True
+                        expected_pages = max(expected_pages, break_count + 1)
+    except Exception:
+        pass
+    return expected_pages, has_breaks
+
+
+def _docx_to_pdf_native_word(docx_path, pdf_path):
+    """
+    Uses Microsoft Word's native headless conversion engine via docx2pdf for 100% exact pagination.
+    """
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+        import docx2pdf
+        docx2pdf.convert(str(docx_path), str(pdf_path))
+        if Path(pdf_path).exists() and Path(pdf_path).stat().st_size > 1000:
+            return True
+    except Exception:
+        pass
+    finally:
+        try:
+            import pythoncom
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+    return False
+
+
 def _docx_to_pdf_pure_python(docx_path, pdf_path):
+    expected_pages, has_explicit_breaks = _get_docx_page_count_info(docx_path)
+
     pdf_doc = fitz.open()
     page_w, page_h = 595.0, 842.0  # Standard A4
-    margin = 40.0
+    margin = 36.0
     usable_w = page_w - (2 * margin)
+    usable_h = page_h - (2 * margin)
 
     page = pdf_doc.new_page(width=page_w, height=page_h)
     y_cursor = margin
 
-    def check_new_page(needed_h):
+    def add_page():
         nonlocal page, y_cursor
-        if y_cursor + needed_h > page_h - margin:
-            page = pdf_doc.new_page(width=page_w, height=page_h)
-            y_cursor = margin
+        page = pdf_doc.new_page(width=page_w, height=page_h)
+        y_cursor = margin
 
     try:
         doc = Document(docx_path)
-        
-        # 1. Process Paragraphs
+        total_text = "".join(p.text for p in doc.paragraphs)
+
+        # A document is strictly single-page if author metadata says 1 page and has no hard page breaks
+        is_single_page_doc = (expected_pages == 1 and not has_explicit_breaks and len(total_text) < 3500)
+
+        base_font_size = 10.0 if (is_single_page_doc and len(total_text) > 1600) else 11.0
+        base_line_h = 14.0 if (is_single_page_doc and len(total_text) > 1600) else 16.0
+
         for p in doc.paragraphs:
+            has_break_here = False
+            if not is_single_page_doc:
+                for run in p.runs:
+                    if '<w:br' in run._r.xml and 'type="page"' in run._r.xml:
+                        has_break_here = True
+                        break
+                if p.paragraph_format.page_break_before:
+                    has_break_here = True
+
+            if has_break_here and y_cursor > margin:
+                add_page()
+
             text = p.text.strip()
             if not text:
-                y_cursor += 10.0
+                y_cursor += (6.0 if is_single_page_doc else 10.0)
                 continue
 
-            font_size = 11.0
-            line_h = 16.0
+            font_size = base_font_size
+            line_h = base_line_h
 
             if hasattr(p, 'style') and p.style and p.style.name:
                 sname = p.style.name.lower()
                 if 'heading 1' in sname:
-                    font_size = 18.0
-                    line_h = 24.0
+                    font_size = 16.0
+                    line_h = 22.0
                 elif 'heading 2' in sname:
-                    font_size = 14.0
-                    line_h = 20.0
-                elif 'heading' in sname:
                     font_size = 13.0
                     line_h = 18.0
+                elif 'heading' in sname:
+                    font_size = 12.0
+                    line_h = 16.0
 
-            approx_lines = max(1, len(text) // 70 + 1)
+            approx_lines = max(1, len(text) // 65 + 1)
             box_h = approx_lines * line_h
-            check_new_page(box_h)
 
-            rect = fitz.Rect(margin, y_cursor, margin + usable_w, y_cursor + box_h + 10)
+            if not is_single_page_doc and (y_cursor + box_h > page_h - margin):
+                add_page()
+
+            remaining_page_h = max(box_h + 10, page_h - margin - y_cursor)
+            rect = fitz.Rect(margin, y_cursor, margin + usable_w, y_cursor + remaining_page_h)
             rect_result = page.insert_textbox(rect, text, fontsize=font_size, color=(0.1, 0.1, 0.1), align=0)
 
-            if rect_result < 0:
-                page = pdf_doc.new_page(width=page_w, height=page_h)
-                y_cursor = margin
-                rect = fitz.Rect(margin, y_cursor, margin + usable_w, y_cursor + box_h + 10)
+            if rect_result < 0 and not is_single_page_doc:
+                add_page()
+                rect = fitz.Rect(margin, y_cursor, margin + usable_w, page_h - margin)
                 page.insert_textbox(rect, text, fontsize=font_size, color=(0.1, 0.1, 0.1), align=0)
 
             y_cursor += (box_h + 4.0)
 
-        # 2. Process Tables
+        # Process Tables
         for table in doc.tables:
             for row in table.rows:
                 cell_texts = [cell.text.strip() for cell in row.cells if cell.text.strip()]
                 if cell_texts:
                     row_str = " | ".join(cell_texts)
-                    approx_lines = max(1, len(row_str) // 70 + 1)
-                    box_h = approx_lines * 15.0
-                    check_new_page(box_h)
+                    approx_lines = max(1, len(row_str) // 65 + 1)
+                    box_h = approx_lines * 14.0
+                    if not is_single_page_doc and (y_cursor + box_h > page_h - margin):
+                        add_page()
 
-                    rect = fitz.Rect(margin + 10, y_cursor, margin + usable_w - 10, y_cursor + box_h + 10)
-                    page.insert_textbox(rect, row_str, fontsize=10.0, color=(0.2, 0.2, 0.3), align=0)
+                    rect = fitz.Rect(margin + 10, y_cursor, margin + usable_w - 10, min(page_h - margin, y_cursor + box_h + 10))
+                    page.insert_textbox(rect, row_str, fontsize=9.5, color=(0.2, 0.2, 0.3), align=0)
                     y_cursor += (box_h + 4.0)
-
-        # 3. Process Embedded Media Images
-        if zipfile.is_zipfile(docx_path):
-            with zipfile.ZipFile(docx_path, 'r') as z:
-                media_files = [f for f in z.namelist() if f.startswith("word/media/")]
-                for m_file in media_files[:5]:
-                    if Path(m_file).suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
-                        try:
-                            img_data = z.read(m_file)
-                            img = Image.open(io.BytesIO(img_data))
-                            w, h = img.size
-                            aspect = h / max(w, 1)
-                            disp_w = min(usable_w * 0.7, 350.0)
-                            disp_h = disp_w * aspect
-
-                            check_new_page(disp_h + 10)
-                            img_rect = fitz.Rect(margin, y_cursor, margin + disp_w, y_cursor + disp_h)
-                            page.insert_image(img_rect, stream=img_data)
-                            y_cursor += (disp_h + 15.0)
-                            img.close()
-                        except Exception:
-                            pass
 
     except Exception:
         try:
             if zipfile.is_zipfile(docx_path):
                 with zipfile.ZipFile(docx_path, 'r') as z:
                     xml_content = z.read("word/document.xml").decode("utf-8", errors="ignore")
-                    import re
                     texts = re.findall(r'<w:t[^>]*>(.*?)</w:t>', xml_content)
                     if texts:
                         full_txt = " ".join(texts)
                         rect = fitz.Rect(margin, margin, margin + usable_w, page_h - margin)
-                        page.insert_textbox(rect, full_txt[:2000], fontsize=11.0)
+                        page.insert_textbox(rect, full_txt[:2500], fontsize=11.0)
         except Exception:
             pass
 
     if pdf_doc.page_count == 0 or y_cursor == margin:
         if pdf_doc.page_count == 0:
             page = pdf_doc.new_page(width=page_w, height=page_h)
-        page.insert_textbox(fitz.Rect(margin, margin, margin + usable_w, margin + 50), "Document Content Exported", fontsize=14.0)
+        page.insert_textbox(fitz.Rect(margin, margin, margin + usable_w, margin + 50), "Document Content", fontsize=14.0)
 
     pdf_doc.save(str(pdf_path), deflate=True)
     pdf_doc.close()
+
+
+def _convert_docx_to_pdf(docx_path, pdf_path):
+    """
+    Converts DOCX to PDF preserving 1-page vs multi-page layout accurately.
+    Uses native Word engine when available, falling back smoothly to pure Python.
+    """
+    if _docx_to_pdf_native_word(docx_path, pdf_path):
+        return True
+
+    _docx_to_pdf_pure_python(docx_path, pdf_path)
+    return True
 
 
 def _pptx_to_pdf_pure_python(pptx_path, pdf_path):
@@ -589,7 +669,7 @@ def word_to_pdf(request):
     _, pdf_path = _build_unique_paths(original_name, ".pdf")
 
     try:
-        _docx_to_pdf_pure_python(word_path, pdf_path)
+        _convert_docx_to_pdf(word_path, pdf_path)
     except Exception as exc:
         _cleanup_files(pdf_path)
         return Response(
@@ -704,34 +784,66 @@ def image_to_pdf(request):
 
     out_name = f"images_converted-{uuid4().hex[:8]}.pdf"
     pdf_path = Path(settings.MEDIA_ROOT) / out_name
-    pil_images = []
+    doc = fitz.open()
+    processed_count = 0
 
     try:
         for img_path, orig_name, is_temp in input_items:
-            suffix = img_path.suffix.lower()
-            if suffix not in [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"]:
+            ext = img_path.suffix.lower()
+            if ext not in IMAGE_EXTENSIONS and not _is_image_file(img_path):
                 continue
 
-            img = Image.open(img_path)
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            pil_images.append(img)
+            converted = False
+            # 1. Native PyMuPDF image conversion (fast, supports vector SVG, multi-frame TIFF, PNG, JPG, BMP, etc.)
+            try:
+                img_doc = fitz.open(img_path)
+                if img_doc.page_count > 0:
+                    pdf_bytes = img_doc.convert_to_pdf()
+                    sub_pdf = fitz.open("pdf", pdf_bytes)
+                    doc.insert_pdf(sub_pdf)
+                    sub_pdf.close()
+                    converted = True
+                    processed_count += 1
+                img_doc.close()
+            except Exception:
+                converted = False
 
-        if not pil_images:
-            return Response({"error": "No valid image files processed"}, status=400)
+            # 2. High-compatibility PIL fallback (e.g. webp, complex multi-frame, exotic color modes)
+            if not converted:
+                try:
+                    from PIL import ImageSequence
+                    with Image.open(img_path) as im:
+                        for frame in ImageSequence.Iterator(im):
+                            buf = io.BytesIO()
+                            rgb_frame = frame.convert("RGB")
+                            rgb_frame.save(buf, format="JPEG", quality=95)
+                            frame_doc = fitz.open("jpeg", buf.getvalue())
+                            pdf_bytes = frame_doc.convert_to_pdf()
+                            sub_pdf = fitz.open("pdf", pdf_bytes)
+                            doc.insert_pdf(sub_pdf)
+                            sub_pdf.close()
+                            frame_doc.close()
+                        converted = True
+                        processed_count += 1
+                except Exception:
+                    pass
 
-        first_img = pil_images[0]
-        other_imgs = pil_images[1:] if len(pil_images) > 1 else []
+        if doc.page_count == 0:
+            doc.close()
+            return Response({"error": "No valid image files could be processed into PDF."}, status=400)
 
-        first_img.save(str(pdf_path), "PDF", resolution=100.0, save_all=True, append_images=other_imgs)
-
-        for img in pil_images:
-            img.close()
+        total_pages = doc.page_count
+        doc.save(str(pdf_path))
+        doc.close()
 
     except Exception as exc:
+        try:
+            doc.close()
+        except Exception:
+            pass
         _cleanup_files(pdf_path)
         return Response(
-            {"error": f"Image to PDF conversion failed: {exc}"},
+            {"error": f"Image to PDF conversion failed: {str(exc)}"},
             status=500,
         )
     finally:
@@ -740,8 +852,10 @@ def image_to_pdf(request):
                 _cleanup_files(img_path)
 
     return Response({
-        "message": f"Successfully converted {len(pil_images)} image(s) to PDF",
-        "file": settings.MEDIA_URL + pdf_path.name
+        "message": f"Successfully converted {processed_count} image(s) to a {total_pages}-page PDF document",
+        "file": settings.MEDIA_URL + pdf_path.name,
+        "pages_count": total_pages,
+        "images_count": processed_count
     })
 
 
@@ -1367,6 +1481,101 @@ def rotate_pdf(request):
 
 
 # ---------------- 16. EXTRACT TEXT FROM IMAGES & ALL FILE TYPES ----------------
+_RAPID_OCR_ENGINE = None
+
+IMAGE_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif",
+    ".gif", ".svg", ".ico", ".jfif", ".avif", ".pjpeg", ".pjp",
+    ".ppm", ".pgm", ".pbm", ".pnm", ".heic", ".heif", ".cur",
+    ".eps", ".icns"
+}
+
+
+def _get_rapid_ocr_engine():
+    global _RAPID_OCR_ENGINE
+    if _RAPID_OCR_ENGINE is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _RAPID_OCR_ENGINE = RapidOCR()
+        except Exception:
+            _RAPID_OCR_ENGINE = False
+    return _RAPID_OCR_ENGINE if _RAPID_OCR_ENGINE else None
+
+
+def _is_image_file(file_path):
+    try:
+        with Image.open(file_path) as im:
+            im.verify()
+        return True
+    except Exception:
+        return False
+
+
+def _ocr_single_image(pil_img):
+    if pil_img is None:
+        return ""
+    try:
+        # Handle alpha transparency (RGBA, LA, or Palette with transparency)
+        # Composite onto a solid white background so dark text isn't lost on black alpha
+        if pil_img.mode in ("RGBA", "LA") or (pil_img.mode == "P" and "transparency" in pil_img.info):
+            rgba_img = pil_img.convert("RGBA")
+            white_bg = Image.new("RGBA", rgba_img.size, (255, 255, 255, 255))
+            composite_img = Image.alpha_composite(white_bg, rgba_img)
+            rgb_img = composite_img.convert("RGB")
+        else:
+            rgb_img = pil_img.convert("RGB")
+
+        # Upscale small images (< 400px) with Lanczos interpolation for significantly higher OCR clarity
+        w, h = rgb_img.size
+        if min(w, h) < 400:
+            scale = max(1.0, min(3.0, 600.0 / min(w, h)))
+            if scale > 1.2:
+                rgb_img = rgb_img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+
+        # 1. Primary high-accuracy OCR: RapidOCR (ONNX model, multilingual, high precision)
+        engine = _get_rapid_ocr_engine()
+        if engine:
+            import numpy as np
+            res, _ = engine(np.array(rgb_img))
+            if res:
+                lines = [line[1].strip() for line in res if line and len(line) > 1 and line[1].strip()]
+                if lines:
+                    return "\n".join(lines)
+
+        # 2. Secondary fallback: pytesseract (if binary is available)
+        try:
+            import pytesseract
+            pyt_txt = pytesseract.image_to_string(rgb_img).strip()
+            if pyt_txt:
+                return pyt_txt
+        except Exception:
+            pass
+
+        # 3. Tertiary fallback: PyMuPDF / fitz
+        try:
+            buf = io.BytesIO()
+            rgb_img.save(buf, format="PNG")
+            doc = fitz.open("png", buf.getvalue())
+            p = doc[0]
+            fz_txt = p.get_text().strip()
+            if not fz_txt:
+                try:
+                    tp = p.get_textpage_ocr(flags=0, full=True)
+                    fz_txt = tp.extractText().strip()
+                except Exception:
+                    pass
+            doc.close()
+            if fz_txt:
+                return fz_txt
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+    return ""
+
+
 @api_view(['POST'])
 def extract_text(request):
     input_path, original_name, is_temp = _get_single_input_path(request, 'file')
@@ -1393,10 +1602,16 @@ def extract_text(request):
                 txt = page.get_text("text").strip()
                 if not txt:
                     try:
-                        tp = page.get_textpage_ocr(flags=0, full=True)
-                        txt = tp.extractText().strip()
+                        # Scanned PDF page fallback to high-res OCR
+                        pix = page.get_pixmap(dpi=150)
+                        page_img = Image.open(io.BytesIO(pix.tobytes("png")))
+                        txt = _ocr_single_image(page_img)
                     except Exception:
-                        pass
+                        try:
+                            tp = page.get_textpage_ocr(flags=0, full=True)
+                            txt = tp.extractText().strip()
+                        except Exception:
+                            pass
                 clean_txt = _clean_html_to_plain_text(txt)
                 return {
                     "title": f"Page {idx + 1}",
@@ -1408,58 +1623,85 @@ def extract_text(request):
                 sections = list(executor.map(process_pdf_page, range(total_pages)))
             pdf_doc.close()
 
-        # 2. Image Files (.png, .jpg, .jpeg, .webp, .bmp, .tiff, .gif, .svg)
-        elif ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".gif", ".svg"]:
-            file_type_label = f"Image ({ext.upper()[1:]})"
-            img_text = ""
-
-            try:
-                import pytesseract
-                img_obj = Image.open(input_path)
-                img_text = pytesseract.image_to_string(img_obj).strip()
-            except Exception:
-                img_text = ""
-
-            if not img_text:
-                try:
-                    img_doc = fitz.open(input_path)
-                    pdf_bytes = img_doc.convert_to_pdf()
-                    pdf_from_img = fitz.open("pdf", pdf_bytes)
-                    page = pdf_from_img[0]
-                    img_text = page.get_text().strip()
-                    if not img_text:
-                        try:
-                            tp = page.get_textpage_ocr(flags=0, full=True)
-                            img_text = tp.extractText().strip()
-                        except Exception:
-                            pass
-                    pdf_from_img.close()
-                    img_doc.close()
-                except Exception:
-                    pass
+        # 2. Image Files (All raster & vector formats: PNG, JPG, JPEG, WEBP, BMP, TIFF, GIF, SVG, ICO, JFIF, AVIF, HEIC, etc.)
+        elif ext in IMAGE_EXTENSIONS or _is_image_file(input_path):
+            file_type_label = f"Image ({ext.upper().lstrip('.') or 'IMG'})"
 
             meta_info = ""
             try:
                 with Image.open(input_path) as img:
                     w, h = img.size
-                    format_str = img.format or ext.upper()[1:]
+                    format_str = img.format or ext.upper().lstrip(".")
                     mode_str = img.mode
                     meta_info = f"[Image Info: Format={format_str}, Resolution={w}x{h}px, Mode={mode_str}]"
             except Exception:
                 meta_info = "[Image File]"
 
-            clean_img_txt = _clean_html_to_plain_text(img_text)
+            # Special handling for Vector SVG
+            if ext == ".svg":
+                direct_svg_text = ""
+                rendered_ocr_text = ""
+                try:
+                    svg_doc = fitz.open(input_path)
+                    svg_page = svg_doc[0]
+                    direct_svg_text = svg_page.get_text().strip()
+                    pix = svg_page.get_pixmap(dpi=200)
+                    svg_img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    rendered_ocr_text = _ocr_single_image(svg_img)
+                    svg_doc.close()
+                except Exception:
+                    pass
 
-            if clean_img_txt:
-                sections.append({
-                    "title": "Extracted Image Text (OCR)",
-                    "text": clean_img_txt
-                })
+                combined_svg = []
+                if direct_svg_text:
+                    combined_svg.append(direct_svg_text)
+                if rendered_ocr_text and rendered_ocr_text not in direct_svg_text:
+                    combined_svg.append(rendered_ocr_text)
+
+                clean_svg_txt = _clean_html_to_plain_text("\n\n".join(combined_svg))
+                if clean_svg_txt:
+                    sections.append({
+                        "title": "Extracted SVG Text",
+                        "text": clean_svg_txt
+                    })
+                else:
+                    sections.append({
+                        "title": "Extracted SVG Text",
+                        "text": f"{meta_info}\n\n[No readable text found in SVG file]"
+                    })
+
             else:
-                sections.append({
-                    "title": "Image File Analysis",
-                    "text": f"{meta_info}\n\nNo plain-text fonts directly embedded. If image contains handwritten or non-standard text, standard optical character recognition was executed."
-                })
+                # Handle multi-page TIFF or multi-frame image
+                try:
+                    from PIL import ImageSequence
+                    with Image.open(input_path) as im:
+                        total_frames = getattr(im, "n_frames", 1)
+                        if total_frames > 1 and ext in [".tiff", ".tif"]:
+                            for idx, frame in enumerate(ImageSequence.Iterator(im)):
+                                frame_txt = _ocr_single_image(frame.copy())
+                                clean_frame_txt = _clean_html_to_plain_text(frame_txt)
+                                sections.append({
+                                    "title": f"Page {idx + 1}",
+                                    "text": clean_frame_txt or "[No readable text on this page]"
+                                })
+                        else:
+                            img_text = _ocr_single_image(im)
+                            clean_img_txt = _clean_html_to_plain_text(img_text)
+                            if clean_img_txt:
+                                sections.append({
+                                    "title": "Extracted Image Text (OCR)",
+                                    "text": clean_img_txt
+                                })
+                            else:
+                                sections.append({
+                                    "title": "Extracted Image Text (OCR)",
+                                    "text": f"{meta_info}\n\n[No readable text detected in this image. Please ensure the image contains clear, legible text.]"
+                                })
+                except Exception as img_err:
+                    sections.append({
+                        "title": "Image File Analysis",
+                        "text": f"{meta_info}\n\n[Error reading image: {str(img_err)}]"
+                    })
 
         # 3. Word Documents (.docx, .doc)
         elif ext in [".docx", ".doc"]:
@@ -1621,5 +1863,293 @@ def extract_text(request):
         "line_count": line_count,
         "sections": sections,
         "extracted_text": extracted_text,
+    })
+
+
+# ---------------- 17. WORD → IMAGE ----------------
+@api_view(['POST'])
+def word_to_image(request):
+    word_path, original_name, is_temp = _get_single_input_path(request, 'file')
+
+    if not word_path or not word_path.exists():
+        return Response({"error": "No file uploaded"}, status=400)
+
+    if word_path.suffix.lower() not in [".docx", ".doc"]:
+        if is_temp: _cleanup_files(word_path)
+        return Response({"error": "Please upload a valid Word document (.docx or .doc)"}, status=400)
+
+    temp_pdf_path = Path(settings.MEDIA_ROOT) / f"temp_{uuid4().hex[:8]}.pdf"
+
+    try:
+        # Convert Word to PDF representation using native layout engine with pure-python fallback
+        _convert_docx_to_pdf(word_path, temp_pdf_path)
+        pdf_doc = fitz.open(temp_pdf_path)
+        total_pages = pdf_doc.page_count
+
+        if total_pages == 0:
+            pdf_doc.close()
+            raise ValueError("The Word document has no readable pages.")
+
+        if total_pages == 1:
+            png_name = f"{word_path.stem}-page1.png"
+            png_path = Path(settings.MEDIA_ROOT) / png_name
+            pixmap = pdf_doc[0].get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            pixmap.save(str(png_path))
+            pdf_doc.close()
+
+            return Response({
+                "message": "Word document exported as 1 page PNG image",
+                "file": settings.MEDIA_URL + png_name,
+                "pages_count": 1
+            })
+        else:
+            zip_name = f"{word_path.stem}-images.zip"
+            zip_path = Path(settings.MEDIA_ROOT) / zip_name
+
+            def render_word_page(idx):
+                page = pdf_doc[idx]
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                return idx, pixmap.tobytes("png")
+
+            max_workers = min(os.cpu_count() or 4, 8)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                rendered_pages = list(executor.map(render_word_page, range(total_pages)))
+
+            with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_STORED) as zipf:
+                for idx, img_bytes in rendered_pages:
+                    zipf.writestr(f"page-{idx+1}.png", img_bytes)
+
+            pdf_doc.close()
+
+            return Response({
+                "message": f"Exported {total_pages} Word pages into PNG Zip package",
+                "file": settings.MEDIA_URL + zip_name,
+                "pages_count": total_pages
+            })
+
+    except Exception as exc:
+        return Response(
+            {"error": f"Word to Image conversion failed: {str(exc)}"},
+            status=500,
+        )
+    finally:
+        _cleanup_files(temp_pdf_path)
+        if is_temp:
+            _cleanup_files(word_path)
+
+
+# ---------------- 18. IMAGE → WORD ----------------
+@api_view(['POST'])
+def image_to_word(request):
+    # Support direct text to Word conversion (e.g. when user edits extracted text in UI)
+    custom_text = request.data.get('text') or request.POST.get('text')
+    if custom_text and isinstance(custom_text, str) and custom_text.strip():
+        out_name = f"converted_document-{uuid4().hex[:8]}.docx"
+        docx_path = Path(settings.MEDIA_ROOT) / out_name
+        try:
+            doc = Document()
+            for sec in doc.sections:
+                sec.top_margin = Inches(1.0)
+                sec.bottom_margin = Inches(1.0)
+                sec.left_margin = Inches(1.0)
+                sec.right_margin = Inches(1.0)
+
+            page_breaks_count = 0
+            for block in custom_text.strip().split("\n\n"):
+                block = block.strip()
+                if not block:
+                    continue
+                if block.strip() in ["--- Page Break ---", "=== Page Break ===", "[Page Break]"] or block.strip().startswith("--- Page Break"):
+                    doc.add_page_break()
+                    page_breaks_count += 1
+                    continue
+                lines = block.split("\n")
+                if len(lines) == 1 and len(lines[0]) < 60 and (lines[0].isupper() or lines[0].startswith("#")):
+                    h = doc.add_heading(lines[0].lstrip("#").strip(), level=2)
+                    h.paragraph_format.space_before = Pt(10)
+                    h.paragraph_format.space_after = Pt(4)
+                else:
+                    p = doc.add_paragraph()
+                    p.paragraph_format.space_after = Pt(6)
+                    p.paragraph_format.line_spacing = 1.15
+                    for idx, line in enumerate(lines):
+                        if idx > 0:
+                            p.add_run("\n")
+                        p.add_run(line)
+
+            doc.save(str(docx_path))
+            words = custom_text.split()
+            return Response({
+                "message": "Word document updated and generated from text",
+                "file": settings.MEDIA_URL + docx_path.name,
+                "pages_count": page_breaks_count + 1,
+                "extracted_text": custom_text.strip(),
+                "word_count": len(words),
+                "char_count": len(custom_text),
+                "line_count": len(custom_text.splitlines()),
+            })
+        except Exception as exc:
+            _cleanup_files(docx_path)
+            return Response({"error": f"Failed to generate Word document: {str(exc)}"}, status=500)
+
+    # Standard flow: User uploads image(s) -> extract text from image(s) -> convert that text to Word
+    input_items = _get_multiple_input_paths(request, 'files')
+
+    if not input_items:
+        return Response({"error": "No image files uploaded"}, status=400)
+
+    out_name = f"converted_document-{uuid4().hex[:8]}.docx"
+    docx_path = Path(settings.MEDIA_ROOT) / out_name
+
+    try:
+        doc = Document()
+        for sec in doc.sections:
+            sec.top_margin = Inches(1.0)
+            sec.bottom_margin = Inches(1.0)
+            sec.left_margin = Inches(1.0)
+            sec.right_margin = Inches(1.0)
+
+        processed_count = 0
+        all_extracted_texts = []
+        sections = []
+
+        for idx, (img_path, orig_name, is_temp) in enumerate(input_items):
+            ext = img_path.suffix.lower()
+            if ext not in IMAGE_EXTENSIONS and not _is_image_file(img_path):
+                continue
+
+            # Check if image has multiple pages/frames (e.g. multi-page TIFF)
+            frames = []
+            if ext in [".tiff", ".tif"]:
+                try:
+                    from PIL import ImageSequence
+                    with Image.open(img_path) as im:
+                        if getattr(im, "n_frames", 1) > 1:
+                            for frame in ImageSequence.Iterator(im):
+                                frames.append(frame.copy())
+                except Exception:
+                    pass
+
+            if not frames:
+                frames = [None]  # Single image/frame
+
+            for f_idx, frame_obj in enumerate(frames):
+                if processed_count > 0:
+                    doc.add_page_break()
+
+                frame_label = f"{orig_name} (Page {f_idx + 1})" if len(frames) > 1 else orig_name
+
+                # 1. Prepare image for OCR extraction
+                pil_for_ocr = None
+                img_stream = None
+                try:
+                    if frame_obj is not None:
+                        pil_for_ocr = frame_obj
+                        buf = io.BytesIO()
+                        frame_obj.convert("RGB").save(buf, format="JPEG", quality=95)
+                        buf.seek(0)
+                        img_stream = buf
+                    elif ext == ".svg":
+                        svg_doc = fitz.open(img_path)
+                        pix = svg_doc[0].get_pixmap(dpi=150)
+                        png_bytes = pix.tobytes("png")
+                        svg_doc.close()
+                        img_stream = io.BytesIO(png_bytes)
+                        pil_for_ocr = Image.open(io.BytesIO(png_bytes))
+                    else:
+                        with Image.open(img_path) as raw_im:
+                            pil_for_ocr = raw_im.copy()
+                            buf = io.BytesIO()
+                            if raw_im.mode in ("RGBA", "LA") or (raw_im.mode == "P" and "transparency" in raw_im.info):
+                                raw_im.save(buf, format="PNG")
+                            else:
+                                raw_im.convert("RGB").save(buf, format="JPEG", quality=95)
+                            buf.seek(0)
+                            img_stream = buf
+                except Exception:
+                    pass
+
+                # 2. Extract text from image using high-accuracy OCR
+                extracted_txt = ""
+                try:
+                    if pil_for_ocr:
+                        extracted_txt = _ocr_single_image(pil_for_ocr)
+                except Exception:
+                    extracted_txt = ""
+
+                clean_txt = _clean_html_to_plain_text(extracted_txt)
+
+                # 3. Convert extracted text into Word document
+                if clean_txt:
+                    all_extracted_texts.append(clean_txt)
+                    sections.append({
+                        "title": frame_label,
+                        "text": clean_txt
+                    })
+
+                    # If multiple images, add a heading label per image
+                    if len(input_items) > 1 or len(frames) > 1:
+                        h = doc.add_heading(frame_label, level=2)
+                        h.paragraph_format.space_before = Pt(8)
+                        h.paragraph_format.space_after = Pt(4)
+
+                    for block in clean_txt.split("\n\n"):
+                        block = block.strip()
+                        if not block:
+                            continue
+                        lines = block.split("\n")
+                        if len(lines) == 1 and len(lines[0]) < 60 and (lines[0].isupper() or lines[0].startswith("#")):
+                            h = doc.add_heading(lines[0].lstrip("#").strip(), level=3)
+                            h.paragraph_format.space_before = Pt(8)
+                            h.paragraph_format.space_after = Pt(3)
+                        else:
+                            p = doc.add_paragraph()
+                            p.paragraph_format.space_after = Pt(6)
+                            p.paragraph_format.line_spacing = 1.15
+                            for l_idx, line in enumerate(lines):
+                                if l_idx > 0:
+                                    p.add_run("\n")
+                                p.add_run(line)
+                else:
+                    # Fallback when image contains no text: insert visual picture
+                    if img_stream:
+                        try:
+                            doc.add_heading(frame_label, level=2)
+                            doc.add_picture(img_stream, width=Inches(5.5))
+                        except Exception:
+                            doc.add_paragraph("[No readable optical character text detected in this image]")
+                    else:
+                        doc.add_paragraph("[No readable optical character text detected in this image]")
+
+                processed_count += 1
+
+        if processed_count == 0:
+            return Response({"error": "No valid image files could be processed."}, status=400)
+
+        doc.save(str(docx_path))
+
+        full_extracted_text = "\n\n".join(all_extracted_texts)
+        words = full_extracted_text.split()
+
+    except Exception as exc:
+        _cleanup_files(docx_path)
+        return Response(
+            {"error": f"Image to Word conversion failed: {str(exc)}"},
+            status=500,
+        )
+    finally:
+        for img_path, orig_name, is_temp in input_items:
+            if is_temp:
+                _cleanup_files(img_path)
+
+    return Response({
+        "message": f"Successfully extracted text from {processed_count} image(s) and converted to Word document (.docx)",
+        "file": settings.MEDIA_URL + docx_path.name,
+        "pages_count": processed_count,
+        "extracted_text": full_extracted_text,
+        "word_count": len(words),
+        "char_count": len(full_extracted_text),
+        "line_count": len(full_extracted_text.splitlines()) if full_extracted_text else 0,
+        "sections": sections
     })
 
