@@ -1,0 +1,29 @@
+# Python Virtual Environments
+backend/env/
+env/
+venv/
+.venv/
+
+# Frontend dependencies and source build assets
+frontend/node_modules/
+node_modules/
+frontend/dist/
+
+# Media & Database files
+backend/project/media/*
+!backend/project/media/.gitkeep
+*.sqlite3
+*.db
+
+# Git, editor, logs
+.git/
+.github/
+.codex-logs/
+*.log
+__pycache__/
+*.pyc
+*.pyo
+
+# Scratch files
+scratch*
+*.tmp

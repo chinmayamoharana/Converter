@@ -1491,6 +1491,39 @@ IMAGE_EXTENSIONS = {
 }
 
 
+def _ensure_tessdata():
+    if "TESSDATA_PREFIX" in os.environ and Path(os.environ["TESSDATA_PREFIX"], "eng.traineddata").exists():
+        return os.environ["TESSDATA_PREFIX"]
+
+    search_dirs = [
+        Path(settings.BASE_DIR) / "tessdata",
+        Path(__file__).resolve().parent.parent / "tessdata",
+        Path(__file__).resolve().parent / "tessdata",
+        Path(settings.BASE_DIR).parent.parent / "tessdata",
+    ]
+    for d in search_dirs:
+        if d.exists() and (d / "eng.traineddata").exists():
+            os.environ["TESSDATA_PREFIX"] = str(d)
+            return str(d)
+
+    # Serverless fallback: download to /tmp/tessdata if missing
+    try:
+        tmp_tessdata = Path("/tmp/tessdata")
+        tmp_tessdata.mkdir(parents=True, exist_ok=True)
+        target = tmp_tessdata / "eng.traineddata"
+        if not target.exists():
+            import urllib.request
+            url = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+            urllib.request.urlretrieve(url, str(target))
+        if target.exists():
+            os.environ["TESSDATA_PREFIX"] = str(tmp_tessdata)
+            return str(tmp_tessdata)
+    except Exception:
+        pass
+
+    return None
+
+
 def _get_rapid_ocr_engine():
     global _RAPID_OCR_ENGINE
     if _RAPID_OCR_ENGINE is None:
@@ -1532,41 +1565,43 @@ def _ocr_single_image(pil_img):
             if scale > 1.2:
                 rgb_img = rgb_img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
 
-        # 1. Primary high-accuracy OCR: RapidOCR (ONNX model, multilingual, high precision)
-        engine = _get_rapid_ocr_engine()
-        if engine:
-            import numpy as np
-            res, _ = engine(np.array(rgb_img))
-            if res:
-                lines = [line[1].strip() for line in res if line and len(line) > 1 and line[1].strip()]
-                if lines:
-                    return "\n".join(lines)
+        # 1. Primary high-accuracy OCR: PyMuPDF built-in C++ Tesseract engine (zero heavy runtime bloat)
+        try:
+            tess_dir = _ensure_tessdata()
+            buf = io.BytesIO()
+            rgb_img.save(buf, format="PNG")
+            doc = fitz.open("png", buf.getvalue())
+            p = doc[0]
+            if tess_dir:
+                tp = p.get_textpage_ocr(language="eng", dpi=150, full=True, tessdata=tess_dir)
+            else:
+                tp = p.get_textpage_ocr(language="eng", dpi=150, full=True)
+            txt = p.get_text(textpage=tp).strip()
+            doc.close()
+            if txt:
+                return txt
+        except Exception:
+            pass
 
-        # 2. Secondary fallback: pytesseract (if binary is available)
+        # 2. Secondary fallback: RapidOCR (if installed locally)
+        try:
+            engine = _get_rapid_ocr_engine()
+            if engine:
+                import numpy as np
+                res, _ = engine(np.array(rgb_img))
+                if res:
+                    lines = [line[1].strip() for line in res if line and len(line) > 1 and line[1].strip()]
+                    if lines:
+                        return "\n".join(lines)
+        except Exception:
+            pass
+
+        # 3. Tertiary fallback: pytesseract (if binary is in system PATH)
         try:
             import pytesseract
             pyt_txt = pytesseract.image_to_string(rgb_img).strip()
             if pyt_txt:
                 return pyt_txt
-        except Exception:
-            pass
-
-        # 3. Tertiary fallback: PyMuPDF / fitz
-        try:
-            buf = io.BytesIO()
-            rgb_img.save(buf, format="PNG")
-            doc = fitz.open("png", buf.getvalue())
-            p = doc[0]
-            fz_txt = p.get_text().strip()
-            if not fz_txt:
-                try:
-                    tp = p.get_textpage_ocr(flags=0, full=True)
-                    fz_txt = tp.extractText().strip()
-                except Exception:
-                    pass
-            doc.close()
-            if fz_txt:
-                return fz_txt
         except Exception:
             pass
 
@@ -1608,8 +1643,9 @@ def extract_text(request):
                         txt = _ocr_single_image(page_img)
                     except Exception:
                         try:
-                            tp = page.get_textpage_ocr(flags=0, full=True)
-                            txt = tp.extractText().strip()
+                            tess_dir = _ensure_tessdata()
+                            tp = page.get_textpage_ocr(language="eng", dpi=150, full=True, tessdata=tess_dir) if tess_dir else page.get_textpage_ocr(language="eng", dpi=150, full=True)
+                            txt = page.get_text(textpage=tp).strip()
                         except Exception:
                             pass
                 clean_txt = _clean_html_to_plain_text(txt)
